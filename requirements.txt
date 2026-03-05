@@ -1,0 +1,8 @@
+tqdm
+loguru
+requests
+beautifulsoup4
+# For ollama
+ollama
+# For openai
+openai
