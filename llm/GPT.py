@@ -37,12 +37,15 @@ class GPT():
     def call_gpt_eval(self, message, model_name, retries=10, wait_time=1, temperature=0.0):
         for i in range(retries):
             try:
-                result = self.client.chat.completions.create(
-                    model=model_name,
-                    messages=message,
-                    temperature=temperature
-                )
-                response_message = result.choices[0].message.content
+                request_kwargs = {
+                    "model": model_name,
+                    "messages": message,
+                    "temperature": temperature,
+                }
+                if str(model_name).startswith("gpt-5"):
+                    request_kwargs["extra_body"] = {"reasoning_effort": "low"}
+                result = self.client.chat.completions.create(**request_kwargs)
+                response_message = self._normalize_response_text(result.choices[0].message.content)
                 return response_message
             except Exception as e:
                 if i < retries - 1:
@@ -59,6 +62,20 @@ class GPT():
         prompt = self.build_prompt(prompt)
         response = self.call_gpt_eval(prompt, self.model_name, temperature=temperature)
         return response
+
+    def _normalize_response_text(self, text):
+        if not isinstance(text, str):
+            return text
+
+        stripped = text.strip()
+        if not stripped.startswith("```"):
+            return stripped
+
+        lines = stripped.splitlines()
+        if len(lines) >= 3 and lines[-1].strip() == "```":
+            return "\n".join(lines[1:-1]).strip()
+
+        return stripped
 
 if __name__ == "__main__":
     # Test GPT

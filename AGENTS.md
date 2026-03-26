@@ -1,0 +1,68 @@
+# AGENTS
+
+## Local Python Environment
+
+- Created on: `2026-03-21 17:49:52 CST`
+- Project root: `/Users/shaoshuai3/Desktop/code/daily-recommender`
+- Virtual environment: `/Users/shaoshuai3/Desktop/code/daily-recommender/.venv`
+- Python version in env: `Python 3.13.12`
+
+## Setup Commands
+
+Create the environment:
+
+```bash
+cd /Users/shaoshuai3/Desktop/code/daily-recommender
+python3 -m venv .venv
+```
+
+Install project dependencies:
+
+```bash
+.venv/bin/pip install -r requirements.txt
+```
+
+Activate the environment in a shell:
+
+```bash
+cd /Users/shaoshuai3/Desktop/code/daily-recommender
+source .venv/bin/activate
+```
+
+## Installed Requirements
+
+Installed from `requirements.txt`:
+
+- `tqdm`
+- `loguru`
+- `requests`
+- `beautifulsoup4`
+- `ollama`
+- `openai`
+
+## Verification
+
+Basic CLI import/argument parsing was verified with:
+
+```bash
+.venv/bin/python main.py --help
+```
+
+This command completed successfully after the environment was created and dependencies were installed.
+
+## Run Prerequisites
+
+- Full project runs still require valid LLM settings: `--provider` and `--model`.
+- For non-`ollama` providers you can use either direct API auth (`LLM_AUTH_MODE=api_key` with `LLM_BASE_URL` + `LLM_API_KEY`) or Codex auth (`LLM_AUTH_MODE=codex_bridge` with `CODEX_AUTH_FILE` pointing at a valid `auth.json`).
+- `codex_bridge` mode prefers OpenAI Platform token exchange when available and otherwise falls back to the local `codex` CLI, so `codex` must be installed and logged in on the machine for that path to work.
+- Full project runs also require SMTP settings because the current main flow sends email directly.
+- Source fetching and LLM evaluation require network access to external services.
+- The current Twitter/X integration uses RapidAPI (`twitter-api45`) rather than direct X API or Nitter.
+- Twitter/X also supports profile-driven account discovery via `--x_discover_accounts`; discovery inputs can be configured with `X_PROFILE_FILE`, `X_PROFILE_URLS`, and `X_DISCOVERY_*` in `.env`.
+- Discovered account pools can be persisted to `x_accounts.discovered.txt` (or `X_DISCOVERY_PERSIST_FILE`) and later reused with `X_USE_PERSISTED_ACCOUNTS=1`.
+
+## Notes
+
+- `main_gpt.sh` is now repo-relative and reads runtime settings from `.env` instead of embedding credentials directly.
+- `main.py` now auto-loads `.env` from the project root. Twitter/X RapidAPI credentials can be supplied there via `X_RAPIDAPI_KEY` and `X_RAPIDAPI_HOST`.
+- `main.py` also supports `LLM_AUTH_MODE=codex_bridge`, `CODEX_AUTH_FILE`, `CODEX_BRIDGE_URL`, `CODEX_BRIDGE_ISSUER`, and `CODEX_API_BASE` for local Codex-auth-backed LLM calls.

@@ -1,13 +1,20 @@
 """
-Fetch tweets from Twitter/X accounts via multiple backends:
-  - api: Twitter API v2 via tweepy
-  - rapidapi: Third-party RapidAPI proxy
-  - nitter: Nitter RSS feed (no auth required, but less reliable)
+Fetch X/Twitter content via RapidAPI's twitter-api45 endpoints.
+
+The project intentionally uses a single backend here. Previous direct API and
+Nitter paths were removed because they required separate credentials or proved
+unreliable in practice.
 """
 
 import os
+from datetime import datetime, timedelta, timezone
+
 import requests
-from datetime import datetime, timezone, timedelta
+
+
+DEFAULT_RAPIDAPI_HOST = "twitter-api45.p.rapidapi.com"
+DEFAULT_TIMEOUT = 30
+DEFAULT_DISCOVERY_TIMEOUT = 12
 
 
 def load_accounts(accounts_file: str) -> list[str]:
@@ -15,345 +22,265 @@ def load_accounts(accounts_file: str) -> list[str]:
     if not os.path.exists(accounts_file):
         print(f"Accounts file not found: {accounts_file}")
         return []
+
     usernames = []
     with open(accounts_file, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if line and not line.startswith("#"):
-                # Strip leading @ if present
                 usernames.append(line.lstrip("@"))
     return usernames
 
 
-def fetch_user_tweets_api(
-    username: str,
-    bearer_token: str,
-    since_hours: int = 24,
-    max_tweets: int = 20,
+def _rapidapi_headers(api_key: str, api_host: str) -> dict[str, str]:
+    if not api_key:
+        raise ValueError("RapidAPI key is required for Twitter/X fetching.")
+    return {
+        "x-rapidapi-host": api_host,
+        "x-rapidapi-key": api_key,
+        "Content-Type": "application/json",
+    }
+
+
+def _rapidapi_get(endpoint: str, api_key: str, api_host: str, timeout: int = DEFAULT_TIMEOUT, **params) -> dict:
+    url = f"https://{api_host}/{endpoint}"
+    response = requests.get(
+        url,
+        headers=_rapidapi_headers(api_key, api_host),
+        params=params,
+        timeout=timeout,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def _parse_created_at(created_str: str) -> tuple[str, datetime] | tuple[None, None]:
+    if not created_str:
+        return None, None
+    try:
+        created_dt = datetime.strptime(created_str, "%a %b %d %H:%M:%S %z %Y")
+    except (ValueError, TypeError):
+        return None, None
+    created_dt = created_dt.astimezone(timezone.utc)
+    return created_dt.isoformat(), created_dt
+
+
+def _extract_author(item: dict, fallback_username: str) -> tuple[str, str]:
+    author = item.get("author")
+    if not isinstance(author, dict):
+        author = {}
+
+    author_username = (
+        author.get("screen_name")
+        or item.get("screen_name")
+        or fallback_username
+    )
+    author_name = (
+        author.get("name")
+        or item.get("name")
+        or fallback_username
+    )
+    return author_username, author_name
+
+
+def _build_tweet_url(author_username: str, tweet_id: str) -> str:
+    if author_username and tweet_id:
+        return f"https://x.com/{author_username}/status/{tweet_id}"
+    return ""
+
+
+def _is_retweet(item: dict, text: str) -> bool:
+    return text.startswith("RT @") or bool(item.get("retweeted_tweet"))
+
+
+def _is_reply(item: dict, text: str) -> bool:
+    conversation_id = str(item.get("conversation_id") or "")
+    tweet_id = str(item.get("tweet_id") or item.get("id_str") or item.get("id") or "")
+    return bool(text.lstrip().startswith("@") and conversation_id and tweet_id and conversation_id != tweet_id)
+
+
+def _parse_tweet_item(item: dict, fallback_username: str, created_iso: str) -> dict:
+    text = item.get("text", "") or item.get("full_text", "")
+    author_username, author_name = _extract_author(item, fallback_username)
+    tweet_id = str(item.get("tweet_id") or item.get("id_str") or item.get("id") or "")
+    is_retweet = _is_retweet(item, text)
+    is_reply = _is_reply(item, text)
+
+    quoted_tweet = item.get("quoted_tweet") or item.get("quoted_status") or {}
+    quoted_text = quoted_tweet.get("text", "") or quoted_tweet.get("full_text", "")
+    quoted_author = (
+        quoted_tweet.get("author", {}).get("screen_name")
+        or quoted_tweet.get("user", {}).get("screen_name", "")
+    )
+
+    entities = item.get("entities", {}) or {}
+    urls = [u.get("expanded_url", u.get("url", "")) for u in entities.get("urls", [])]
+    media = item.get("media", []) or item.get("extended_entities", {}).get("media", []) or []
+    media_urls = [
+        media_item.get("media_url_https", media_item.get("media_url", ""))
+        for media_item in media
+        if isinstance(media_item, dict)
+    ]
+
+    return {
+        "tweet_id": tweet_id,
+        "text": text,
+        "author_username": author_username,
+        "author_name": author_name,
+        "created_at": created_iso,
+        "likes": item.get("favorites", item.get("favorite_count", 0)),
+        "retweets": item.get("retweets", item.get("retweet_count", 0)),
+        "replies": item.get("replies", item.get("reply_count", 0)),
+        "is_retweet": is_retweet,
+        "is_reply": is_reply,
+        "is_quote": bool(quoted_text),
+        "quoted_text": quoted_text,
+        "quoted_author": quoted_author,
+        "media_urls": media_urls,
+        "urls": urls,
+        "tweet_url": item.get("url", "") or _build_tweet_url(author_username, tweet_id),
+        "_x_backend": "rapidapi",
+        "_x_retweet_flag_trusted": True,
+        # Reply detection is heuristic because this endpoint does not expose a
+        # dedicated reply flag on every item shape.
+        "_x_reply_flag_trusted": False,
+    }
+
+
+def search_people_rapidapi(
+    query: str,
+    api_key: str,
+    api_host: str = DEFAULT_RAPIDAPI_HOST,
+    max_results: int = 20,
+    timeout: int = DEFAULT_DISCOVERY_TIMEOUT,
 ) -> list[dict]:
-    """Fetch recent tweets using Twitter API v2 via tweepy (lazy import)."""
+    """Search accounts by person name using search_type=People."""
     try:
-        import tweepy
-    except ImportError:
-        print("tweepy is not installed. Install with: pip install tweepy")
-        return []
-
-    client = tweepy.Client(bearer_token=bearer_token, wait_on_rate_limit=True)
-    since_time = datetime.now(timezone.utc) - timedelta(hours=since_hours)
-
-    try:
-        # Look up user ID
-        user_resp = client.get_user(username=username, user_fields=["name", "profile_image_url"])
-        if not user_resp or not user_resp.data:
-            print(f"[api] User not found: @{username}")
-            return []
-        user = user_resp.data
-        user_id = user.id
-        author_name = user.name
-
-        # Fetch tweets
-        tweets_resp = client.get_users_tweets(
-            user_id,
-            max_results=min(max_tweets, 100),
-            start_time=since_time,
-            tweet_fields=["created_at", "public_metrics", "referenced_tweets", "entities"],
-            expansions=["referenced_tweets.id", "referenced_tweets.id.author_id"],
-            user_fields=["username", "name"],
+        data = _rapidapi_get(
+            "search.php",
+            api_key,
+            api_host,
+            timeout=timeout,
+            query=query,
+            search_type="People",
         )
-
-        if not tweets_resp or not tweets_resp.data:
-            return []
-
-        # Build lookup for referenced tweets
-        includes = tweets_resp.includes or {}
-        ref_tweets = {t.id: t for t in (includes.get("tweets") or [])}
-        ref_users = {u.id: u for u in (includes.get("users") or [])}
-
-        results = []
-        for tweet in tweets_resp.data:
-            metrics = tweet.public_metrics or {}
-            is_retweet = False
-            is_reply = False
-            is_quote = False
-            quoted_text = ""
-            quoted_author = ""
-
-            if tweet.referenced_tweets:
-                for ref in tweet.referenced_tweets:
-                    if ref.type == "retweeted":
-                        is_retweet = True
-                    elif ref.type == "replied_to":
-                        is_reply = True
-                    elif ref.type == "quoted":
-                        is_quote = True
-                        rt = ref_tweets.get(ref.id)
-                        if rt:
-                            quoted_text = rt.text
-                            if hasattr(rt, "author_id") and rt.author_id in ref_users:
-                                quoted_author = ref_users[rt.author_id].username
-
-            # Extract URLs and media
-            entities = tweet.data.get("entities", {}) if hasattr(tweet, "data") else {}
-            urls = [u.get("expanded_url", u.get("url", "")) for u in entities.get("urls", [])]
-            media_urls = []  # Media requires additional expansion
-
-            results.append({
-                "tweet_id": str(tweet.id),
-                "text": tweet.text,
-                "author_username": username,
-                "author_name": author_name,
-                "created_at": tweet.created_at.isoformat() if tweet.created_at else "",
-                "likes": metrics.get("like_count", 0),
-                "retweets": metrics.get("retweet_count", 0),
-                "replies": metrics.get("reply_count", 0),
-                "is_retweet": is_retweet,
-                "is_reply": is_reply,
-                "is_quote": is_quote,
-                "quoted_text": quoted_text,
-                "quoted_author": quoted_author,
-                "media_urls": media_urls,
-                "urls": urls,
-                "tweet_url": f"https://x.com/{username}/status/{tweet.id}",
-            })
-
-        return results
-
     except Exception as e:
-        print(f"[api] Error fetching tweets for @{username}: {e}")
+        print(f"[rapidapi] Error searching people for '{query}': {e}")
         return []
+
+    results = []
+    for item in (data.get("timeline") or [])[:max_results]:
+        if item.get("type") != "user":
+            continue
+        screen_name = item.get("screen_name")
+        if not screen_name:
+            continue
+        results.append({
+            "screen_name": screen_name,
+            "name": item.get("name", screen_name),
+            "followers_count": item.get("followers_count", 0),
+            "avatar": item.get("avatar"),
+            "verified": item.get("blue_verified", False),
+            "profile_url": f"https://x.com/{screen_name}",
+        })
+    return results
+
+
+def search_top_tweets_rapidapi(
+    query: str,
+    api_key: str,
+    api_host: str = DEFAULT_RAPIDAPI_HOST,
+    max_results: int = 20,
+    timeout: int = DEFAULT_DISCOVERY_TIMEOUT,
+) -> list[dict]:
+    """Search top tweets for a topic or keyword using search_type=Top."""
+    try:
+        data = _rapidapi_get(
+            "search.php",
+            api_key,
+            api_host,
+            timeout=timeout,
+            query=query,
+            search_type="Top",
+        )
+    except Exception as e:
+        print(f"[rapidapi] Error searching top tweets for '{query}': {e}")
+        return []
+
+    results = []
+    for item in (data.get("timeline") or [])[:max_results]:
+        if item.get("type") != "tweet":
+            continue
+        created_iso, _ = _parse_created_at(item.get("created_at", ""))
+        results.append(_parse_tweet_item(item, fallback_username="", created_iso=created_iso or ""))
+    return results
 
 
 def fetch_user_tweets_rapidapi(
     username: str,
     api_key: str,
-    api_host: str = "twitter-api45.p.rapidapi.com",
+    api_host: str = DEFAULT_RAPIDAPI_HOST,
     since_hours: int = 24,
     max_tweets: int = 20,
+    timeout: int = DEFAULT_TIMEOUT,
 ) -> list[dict]:
-    """Fetch recent tweets via RapidAPI Twitter proxy."""
-    url = f"https://{api_host}/timeline.php"
-    headers = {
-        "X-RapidAPI-Key": api_key,
-        "X-RapidAPI-Host": api_host,
-    }
-    params = {"screenname": username, "count": str(max_tweets)}
-
+    """Fetch recent tweets from an account timeline via RapidAPI."""
     try:
-        resp = requests.get(url, headers=headers, params=params, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
+        data = _rapidapi_get(
+            "timeline.php",
+            api_key,
+            api_host,
+            timeout=timeout,
+            screenname=username,
+            count=max_tweets,
+        )
     except Exception as e:
         print(f"[rapidapi] Error fetching tweets for @{username}: {e}")
         return []
 
     since_time = datetime.now(timezone.utc) - timedelta(hours=since_hours)
-    timeline = data.get("timeline", [])
+    timeline = data.get("timeline") or []
     results = []
 
-    for item in timeline[:max_tweets]:
-        # Parse created_at
-        created_str = item.get("created_at", "")
-        try:
-            created_dt = datetime.strptime(created_str, "%a %b %d %H:%M:%S %z %Y")
-            if created_dt < since_time:
-                continue
-            created_iso = created_dt.isoformat()
-        except (ValueError, TypeError):
-            created_iso = created_str
-
-        text = item.get("text", "") or item.get("full_text", "")
-        is_retweet = text.startswith("RT @")
-        is_reply = item.get("in_reply_to_screen_name") is not None
-        is_quote = item.get("is_quote_status", False)
-
-        quoted_text = ""
-        quoted_author = ""
-        qt = item.get("quoted_status")
-        if qt:
-            quoted_text = qt.get("text", "") or qt.get("full_text", "")
-            quoted_author = qt.get("user", {}).get("screen_name", "")
-
-        # Extract media
-        media_urls = []
-        entities = item.get("entities", {})
-        extended = item.get("extended_entities", {})
-        for m in extended.get("media", entities.get("media", [])):
-            media_urls.append(m.get("media_url_https", m.get("media_url", "")))
-
-        urls = [u.get("expanded_url", u.get("url", "")) for u in entities.get("urls", [])]
-
-        tweet_id = item.get("id_str", str(item.get("id", "")))
-        author_name = item.get("user", {}).get("name", username)
-
-        results.append({
-            "tweet_id": tweet_id,
-            "text": text,
-            "author_username": username,
-            "author_name": author_name,
-            "created_at": created_iso,
-            "likes": item.get("favorite_count", 0),
-            "retweets": item.get("retweet_count", 0),
-            "replies": item.get("reply_count", 0),
-            "is_retweet": is_retweet,
-            "is_reply": is_reply,
-            "is_quote": is_quote,
-            "quoted_text": quoted_text,
-            "quoted_author": quoted_author,
-            "media_urls": media_urls,
-            "urls": urls,
-            "tweet_url": f"https://x.com/{username}/status/{tweet_id}",
-        })
-
-    return results
-
-
-def fetch_user_tweets_nitter(
-    username: str,
-    nitter_instances: list[str] | None = None,
-    since_hours: int = 24,
-    max_tweets: int = 20,
-) -> list[dict]:
-    """Fetch recent tweets from Nitter RSS feed (no auth required)."""
-    from bs4 import BeautifulSoup
-
-    if not nitter_instances:
-        nitter_instances = [
-            "nitter.privacydev.net",
-            "nitter.poast.org",
-            "nitter.woodland.cafe",
-        ]
-
-    since_time = datetime.now(timezone.utc) - timedelta(hours=since_hours)
-    results = []
-
-    for instance in nitter_instances:
-        rss_url = f"https://{instance}/{username}/rss"
-        try:
-            resp = requests.get(rss_url, timeout=15, headers={
-                "User-Agent": "Mozilla/5.0 (compatible; DailyRecommender/1.0)"
-            })
-            if resp.status_code != 200:
-                continue
-
-            soup = BeautifulSoup(resp.content, "html.parser")
-            items = soup.find_all("item")
-
-            for item in items[:max_tweets]:
-                title = item.find("title")
-                desc = item.find("description")
-                link = item.find("link")
-                pub_date = item.find("pubdate")
-
-                text = ""
-                if desc:
-                    desc_soup = BeautifulSoup(desc.get_text(), "html.parser")
-                    text = desc_soup.get_text(separator=" ", strip=True)
-                elif title:
-                    text = title.get_text(strip=True)
-
-                # Parse pubDate
-                created_iso = ""
-                if pub_date:
-                    try:
-                        from email.utils import parsedate_to_datetime
-                        created_dt = parsedate_to_datetime(pub_date.get_text(strip=True))
-                        if created_dt < since_time:
-                            continue
-                        created_iso = created_dt.isoformat()
-                    except Exception:
-                        pass
-
-                # Extract tweet URL and ID
-                tweet_url = ""
-                tweet_id = ""
-                guid = item.find("guid")
-                if guid:
-                    guid_text = guid.get_text(strip=True)
-                    # guid may be just the numeric ID or a full URL
-                    if guid_text.isdigit():
-                        tweet_id = guid_text
-                    else:
-                        tweet_id = guid_text.rstrip("#m").rstrip("/").split("/")[-1]
-                if link:
-                    # <link/> is self-closing in RSS XML; URL is in next_sibling
-                    raw_link = link.get_text(strip=True)
-                    if not raw_link and link.next_sibling:
-                        raw_link = str(link.next_sibling).strip().rstrip("#m")
-                    if raw_link:
-                        tweet_url = raw_link.replace(f"https://{instance}", "https://x.com")
-                if not tweet_url and tweet_id:
-                    tweet_url = f"https://x.com/{username}/status/{tweet_id}"
-
-                is_retweet = text.startswith("RT by @") or text.startswith("R to @")
-                is_reply = "replying to @" in text.lower()
-
-                results.append({
-                    "tweet_id": tweet_id or f"nitter_{hash(text) & 0xFFFFFFFF:08x}",
-                    "text": text,
-                    "author_username": username,
-                    "author_name": username,
-                    "created_at": created_iso,
-                    "likes": 0,
-                    "retweets": 0,
-                    "replies": 0,
-                    "is_retweet": is_retweet,
-                    "is_reply": is_reply,
-                    "is_quote": False,
-                    "quoted_text": "",
-                    "quoted_author": "",
-                    "media_urls": [],
-                    "urls": [],
-                    "tweet_url": tweet_url,
-                })
-
-            if results:
-                print(f"[nitter] Fetched {len(results)} tweets for @{username} via {instance}")
-                return results
-
-        except Exception as e:
-            print(f"[nitter] Failed for @{username} via {instance}: {e}")
+    for item in timeline:
+        created_iso, created_dt = _parse_created_at(item.get("created_at", ""))
+        if not created_dt or created_dt < since_time:
             continue
+        results.append(_parse_tweet_item(item, fallback_username=username, created_iso=created_iso))
+        if len(results) >= max_tweets:
+            break
 
-    if not results:
-        print(f"[nitter] All instances failed for @{username}")
     return results
 
 
 def fetch_all_accounts(
     accounts: list[str],
-    backend: str = "api",
-    bearer_token: str = "",
-    api_key: str = "",
-    api_host: str = "twitter-api45.p.rapidapi.com",
-    nitter_instances: list[str] | None = None,
+    api_key: str,
+    api_host: str = DEFAULT_RAPIDAPI_HOST,
     since_hours: int = 24,
     max_tweets_per_user: int = 20,
 ) -> list[dict]:
-    """Fetch tweets from all accounts, deduplicate by tweet_id."""
+    """Fetch tweets from all configured accounts, deduplicated by tweet_id."""
     all_tweets = []
     seen_ids = set()
 
     for username in accounts:
-        print(f"[{backend}] Fetching tweets for @{username}...")
-        tweets = []
-
-        if backend == "api":
-            tweets = fetch_user_tweets_api(username, bearer_token, since_hours, max_tweets_per_user)
-        elif backend == "rapidapi":
-            tweets = fetch_user_tweets_rapidapi(username, api_key, api_host, since_hours, max_tweets_per_user)
-        elif backend == "nitter":
-            tweets = fetch_user_tweets_nitter(username, nitter_instances, since_hours, max_tweets_per_user)
-        else:
-            print(f"Unknown backend: {backend}")
-            continue
+        print(f"[rapidapi] Fetching tweets for @{username}...")
+        tweets = fetch_user_tweets_rapidapi(
+            username=username,
+            api_key=api_key,
+            api_host=api_host,
+            since_hours=since_hours,
+            max_tweets=max_tweets_per_user,
+        )
 
         for tweet in tweets:
-            tid = tweet["tweet_id"]
-            if tid not in seen_ids:
-                seen_ids.add(tid)
+            tweet_id = tweet.get("tweet_id")
+            if tweet_id and tweet_id not in seen_ids:
+                seen_ids.add(tweet_id)
                 all_tweets.append(tweet)
 
         print(f"  -> {len(tweets)} tweets from @{username}")
 
-    print(f"[{backend}] Total: {len(all_tweets)} unique tweets from {len(accounts)} accounts")
+    print(f"[rapidapi] Total: {len(all_tweets)} unique tweets from {len(accounts)} accounts")
     return all_tweets

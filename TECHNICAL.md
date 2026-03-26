@@ -4,7 +4,7 @@
 
 The system uses a plugin-based architecture. Each data source (GitHub, HuggingFace, future arXiv, etc.) implements the `BaseSource` abstract class and registers in `SOURCE_REGISTRY`. Shared modules (LLM, email, caching) are reused across all sources.
 
-Run with `--sources github huggingface` to select sources. Each source independently fetches data, evaluates with LLM, renders HTML, and sends email.
+Run with `--sources github huggingface twitter` to select sources. Each source independently fetches data, evaluates with LLM, renders HTML, and sends email.
 
 ### Directory Structure
 
@@ -16,26 +16,32 @@ daily-recommender/
   description.txt                  # User interest description
   requirements.txt
   main_gpt.sh                      # Launch script
+  x_accounts.txt                   # X accounts to monitor
   sources/
     __init__.py                    # SOURCE_REGISTRY
     github_source.py               # GitHubSource(BaseSource)
     huggingface_source.py          # HuggingFaceSource(BaseSource)
+    twitter_source.py              # TwitterSource(BaseSource)
   llm/
     __init__.py
     GPT.py                         # OpenAI-compatible API
     Ollama.py                      # Ollama local model
+    codex_bridge.py               # Local bridge for Codex ChatGPT auth -> OpenAI-compatible API
   fetchers/
     __init__.py
     github_fetcher.py              # GitHub Trending scraper
     huggingface_fetcher.py         # HuggingFace API client
+    twitter_fetcher.py             # RapidAPI twitter-api45 client
   email_utils/
     __init__.py
     base_template.py               # Shared HTML framework, stars, summary styles
     github_template.py             # GitHub repo card template
     huggingface_template.py        # HF paper/model card templates
+    twitter_template.py            # X/Twitter tweet card template
   history/                         # Cache organized by source/date
     github/{date}/json/
     huggingface/{date}/json/
+    twitter/{date}/json/
 ```
 
 ## 2. Setup and Running
@@ -50,14 +56,25 @@ Dependencies: tqdm, loguru, requests, beautifulsoup4, openai, ollama (optional)
 
 ### Configuration
 
-Edit `main_gpt.sh` with your LLM API and email settings. Edit `description.txt` with your interest areas.
+`main.py` and `main_gpt.sh` will auto-load `.env` from the project root. Put `LLM_*`, `SMTP_*`, and `X_RAPIDAPI_*` there if you don't want to pass them on the CLI. Edit `description.txt` with your interest areas.
+
+### LLM Authentication Modes
+
+This repo now supports two OpenAI-compatible auth paths:
+
+- `LLM_AUTH_MODE=api_key`: the original mode using `LLM_BASE_URL` + `LLM_API_KEY`
+- `LLM_AUTH_MODE=codex_bridge`: starts a local bridge that reads `~/.codex/auth.json`. It prefers standard OpenAI API key exchange when the Codex auth state includes Platform org/project claims, and otherwise falls back to running `codex exec` locally behind an OpenAI-compatible `/v1/chat/completions` bridge.
+
+In `codex_bridge` mode, `LLM_BASE_URL` is optional. If unset, the repo uses `CODEX_BRIDGE_URL` (default `http://127.0.0.1:8765/v1`).
+The CLI fallback requires a local `codex` binary on `PATH` and a valid Codex/ChatGPT login state.
 
 ### Run
 
 ```bash
-bash main_gpt.sh                              # Run all sources
+bash main_gpt.sh                              # Run the sources configured in .env / script defaults
 python main.py --sources github [args...]      # GitHub only
 python main.py --sources huggingface [args...] # HuggingFace only
+python main.py --sources twitter [args...]     # Twitter/X only
 ```
 
 ### Cron Job
@@ -104,8 +121,9 @@ python main.py --sources huggingface [args...] # HuggingFace only
 
 ```
 1. main.py parses CLI args
-2. Tests LLM availability once
-3. For each source in --sources:
+2. Optionally starts the local Codex bridge when `LLM_AUTH_MODE=codex_bridge`
+3. Tests LLM availability once
+4. For each source in --sources:
    a. Source.__init__: init LLM + fetch raw data from source
    b. get_recommendations():
       - fetch_items()             -> raw item list
@@ -148,6 +166,28 @@ python main.py --sources huggingface [args...] # HuggingFace only
 - **Theme**: Orange (#ff6f00)
 - **Card features**: Papers (yellow bg + orange button), Models (blue bg + blue button), separate sections
 
+### TwitterSource
+
+- **Data source**: RapidAPI `twitter-api45`
+  - Account search: `search.php?search_type=People`
+  - Topic search: `search.php?search_type=Top`
+  - Timeline fetch: `timeline.php?screenname=<handle>`
+- **Current integration**: This repo uses account timelines from `x_accounts.txt` and fetches recent posts via `timeline.php`
+- **Optional account discovery**: You can enable profile-driven account discovery before tweet fetching. The source will:
+  - read a profile from `--x_profile_file`, `--x_profile_urls`, or fall back to `description.txt`
+  - ask the LLM to propose person queries, organization queries, and topic queries
+  - search X iteratively via `People` and `Top`, then run one or more coverage-expansion passes to fill missing role buckets
+  - classify candidates into `include/watch/exclude`
+  - build two monitoring tiers:
+    - `core_selected_accounts`: the smaller must-watch list
+    - `extended_selected_accounts`: the broader watchlist used for richer monitoring coverage
+  - save `discovered_accounts.json`, `discovered_accounts.txt`, `discovered_accounts.core.txt`, and `discovered_accounts.extended.txt` under `history/twitter/<date>/`
+  - persist the broader watchlist to `x_accounts.discovered.txt` (or a custom `--x_discovery_persist_file`) and also persist companion `*.core.txt` / `*.extended.txt` files so later runs can monitor the same pool without rediscovery
+- **Source-specific args**: `--x_accounts_file`, `--x_rapidapi_key`, `--x_rapidapi_host`, `--x_since_hours`, `--x_max_tweets_per_user`, `--x_max_tweets`
+- **Filtering**: Retweets are filtered reliably; reply filtering is best-effort because the endpoint does not provide a dedicated reply flag on every item shape
+- **Theme**: Blue (#1d9bf0)
+- **Card features**: Tweet body, engagement stats, optional quoted text, tweet URL
+
 ### Overridden Methods
 
 HuggingFaceSource overrides `get_recommendations()` and `render_email()` to handle papers and models as separate categories with independent sorting and rendering sections.
@@ -188,8 +228,14 @@ Then users can use `--sources xxx`.
 | --sources | Source list | required |
 | --provider | LLM provider | required |
 | --model | Model name | required |
+| --auth_mode | `api_key` or `codex_bridge` | api_key |
 | --base_url | API URL | None |
 | --api_key | API key | None |
+| --codex_auth_file | Path to `auth.json` for Codex bridge | `~/.codex/auth.json` |
+| --codex_bridge_url | Local bridge URL | `http://127.0.0.1:8765/v1` |
+| --codex_bridge_issuer | OAuth issuer for bridge | `https://auth.openai.com` |
+| --codex_api_base | Upstream OpenAI API base for bridge | `https://api.openai.com/v1` |
+| --codex_bridge_start_timeout | Seconds to wait for bridge health | 15 |
 | --temperature | LLM temperature | 0.7 |
 | --smtp_server | SMTP server | - |
 | --smtp_port | SMTP port | - |
@@ -215,6 +261,32 @@ Then users can use `--sources xxx`.
 | --hf_content_type | Content types | papers models |
 | --hf_max_papers | Max papers | 30 |
 | --hf_max_models | Max models | 15 |
+
+### Twitter Parameters (--x_ prefix)
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| --x_accounts_file | Accounts list file | x_accounts.txt |
+| --x_rapidapi_key | RapidAPI key for twitter-api45 | required for Twitter |
+| --x_rapidapi_host | RapidAPI host | twitter-api45.p.rapidapi.com |
+| --x_discover_accounts | Enable profile-driven account discovery | False |
+| --x_merge_static_accounts | Merge discovered accounts with x_accounts.txt | False |
+| --x_use_persisted_accounts | Reuse a persisted discovered account pool | False |
+| --x_skip_discovery_if_persisted | Skip fresh discovery when persisted pool exists | True |
+| --x_discovery_persist_file | Persisted discovered account pool file | x_accounts.discovered.txt |
+| --x_profile_file | Optional profile file for discovery | description.txt content |
+| --x_profile_urls | Optional homepage / Scholar URLs for discovery | None |
+| --x_discovery_rounds | Discovery rounds | 2 |
+| --x_discovery_max_candidates | Max intermediate candidates | 20 |
+| --x_discovery_max_final_accounts | Max selected discovered accounts | 10 |
+| --x_discovery_search_results_per_query | RapidAPI results consumed per discovery query | 5 |
+| --x_discovery_sample_tweets | Recent tweets sampled for candidate scoring | 2 |
+| --x_discovery_min_score | Minimum fit score for auto-include | 6.0 |
+| --x_since_hours | Lookback window | 24 |
+| --x_max_tweets_per_user | Max timeline items per account | 20 |
+| --x_max_tweets | Max final recommendations | 50 |
+| --x_skip_retweets | Exclude retweets | True |
+| --x_include_replies | Include replies | False |
 
 ## 9. Comparison with Previous Version
 

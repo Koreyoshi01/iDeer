@@ -6,5 +6,3 @@ beautifulsoup4
 ollama
 # For openai
 openai
-# For twitter API backend (optional, only needed for --x_backend api)
-tweepy
