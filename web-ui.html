@@ -1,0 +1,1113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Daily Recommender - 每日智能推荐</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'Noto Sans SC', 'sans-serif'],
+            serif: ['Georgia', 'serif'],
+          },
+          colors: {
+            slate: {
+              50: '#f8fafc', 100: '#f1f5f9', 200: '#e2e8f0', 300: '#cbd5e1',
+              400: '#94a3b8', 500: '#64748b', 600: '#475569', 700: '#334155',
+              800: '#1e293b', 900: '#0f172a',
+            },
+            emerald: {
+              50: '#ecfdf5', 100: '#d1fae5', 200: '#a7f3d0', 300: '#6ee7b7',
+              400: '#34d399', 500: '#10b981', 600: '#059669', 700: '#047857',
+            },
+            orange: { 400: '#fb923c', 500: '#f97316', 600: '#ea580c', }
+          },
+          boxShadow: {
+            'soft': '0 8px 30px rgba(0,0,0,0.04)',
+            'glow': '0 10px 28px rgba(120,135,160,0.08)',
+            'card': '0 18px 44px rgba(92,136,112,0.08)',
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body {
+      background: radial-gradient(circle at top, rgba(210,224,244,0.58), transparent 34%),
+                  linear-gradient(180deg, #f6f8fc 0%, #f9fbff 40%, #ffffff 100%);
+      min-height: 100vh;
+    }
+    .glass-card {
+      background: rgba(255, 255, 255, 0.95);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+    }
+    .input-glow:focus {
+      box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, #059669 0%, #10b981 100%);
+      transition: all 0.2s ease;
+    }
+    .btn-primary:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+    }
+    .btn-primary:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+    .source-card {
+      transition: all 0.2s ease;
+    }
+    .source-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.06);
+    }
+    .source-card.selected {
+      border-color: #10b981;
+      background: rgba(236, 253, 245, 0.8);
+    }
+    .checkbox-custom:checked {
+      background-color: #10b981;
+      border-color: #10b981;
+    }
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.7; transform: scale(1.1); }
+    }
+    .animate-pulse-dot {
+      animation: pulse-dot 1.5s ease-in-out infinite;
+    }
+    .tab-active {
+      color: #059669;
+      border-bottom-color: #059669;
+    }
+    .log-container {
+      max-height: 300px;
+      overflow-y: auto;
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .log-line {
+      padding: 2px 0;
+      border-bottom: 1px solid rgba(0,0,0,0.05);
+    }
+    .log-line:last-child {
+      border-bottom: none;
+    }
+    .prose h1 { font-size: 1.5rem; font-weight: 700; margin: 1.5rem 0 1rem; }
+    .prose h2 { font-size: 1.25rem; font-weight: 600; margin: 1.25rem 0 0.75rem; }
+    .prose h3 { font-size: 1.125rem; font-weight: 600; margin: 1rem 0 0.5rem; }
+    .prose p { margin-bottom: 0.75rem; line-height: 1.6; }
+    .prose ul { list-style-type: disc; padding-left: 1.5rem; margin-bottom: 0.75rem; }
+    .prose li { margin-bottom: 0.25rem; }
+    .prose a { color: #059669; }
+    .prose a:hover { text-decoration: underline; }
+    .prose code { background: #f1f5f9; padding: 0.125rem 0.375rem; border-radius: 0.25rem; font-size: 0.875rem; }
+    .prose strong { font-weight: 600; }
+  </style>
+</head>
+<body class="text-slate-700 font-sans">
+  <!-- Header -->
+  <header class="sticky top-0 z-50 glass-card border-b border-slate-200/80">
+    <div class="max-w-6xl mx-auto px-4 md:px-8 h-16 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-600 flex items-center justify-center text-white font-bold text-sm">
+          DR
+        </div>
+        <h1 class="text-lg font-semibold text-slate-800">Daily Recommender</h1>
+        <span class="text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">Web</span>
+      </div>
+      <nav class="flex items-center gap-1">
+        <button onclick="switchTab('dashboard')" id="tab-dashboard" class="tab-btn px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-900 transition border-b-2 border-transparent tab-active">
+          控制台
+        </button>
+        <button onclick="switchTab('config')" id="tab-config" class="tab-btn px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-900 transition border-b-2 border-transparent">
+          配置
+        </button>
+        <button onclick="switchTab('history')" id="tab-history" class="tab-btn px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-900 transition border-b-2 border-transparent">
+          历史
+        </button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-4 md:px-8 py-8">
+    <!-- Dashboard Tab -->
+    <div id="view-dashboard" class="space-y-8">
+      <!-- Hero Section -->
+      <section class="text-center py-12">
+        <h2 class="font-serif text-3xl md:text-4xl text-slate-800 mb-3">发现值得关注的内容</h2>
+        <p class="text-slate-500 max-w-xl mx-auto">从 GitHub、HuggingFace、Twitter 等来源自动采集和筛选，生成个性化推荐</p>
+      </section>
+
+      <!-- Quick Actions -->
+      <section class="grid md:grid-cols-3 gap-4">
+        <div class="glass-card rounded-2xl p-6 border border-slate-200/80 shadow-soft">
+          <div class="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center mb-4">
+            <svg class="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+            </svg>
+          </div>
+          <h3 class="font-semibold text-slate-800 mb-1">快速运行</h3>
+          <p class="text-sm text-slate-500 mb-4">使用当前配置立即生成推荐</p>
+          <button onclick="quickRun()" id="btn-quick-run" class="w-full py-2.5 px-4 rounded-xl bg-slate-100 text-slate-700 font-medium text-sm hover:bg-slate-200 transition">
+            立即运行
+          </button>
+        </div>
+
+        <div class="glass-card rounded-2xl p-6 border border-slate-200/80 shadow-soft">
+          <div class="w-10 h-10 rounded-xl bg-emerald-50 flex items-center justify-center mb-4">
+            <svg class="w-5 h-5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+            </svg>
+          </div>
+          <h3 class="font-semibold text-slate-800 mb-1">生成报告</h3>
+          <p class="text-sm text-slate-500 mb-4">跨源综合分析报告</p>
+          <button onclick="generateReport()" id="btn-report" class="w-full py-2.5 px-4 rounded-xl bg-emerald-50 text-emerald-700 font-medium text-sm hover:bg-emerald-100 transition">
+            生成报告
+          </button>
+        </div>
+
+        <div class="glass-card rounded-2xl p-6 border border-slate-200/80 shadow-soft">
+          <div class="w-10 h-10 rounded-xl bg-orange-50 flex items-center justify-center mb-4">
+            <svg class="w-5 h-5 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
+            </svg>
+          </div>
+          <h3 class="font-semibold text-slate-800 mb-1">研究想法</h3>
+          <p class="text-sm text-slate-500 mb-4">基于推荐生成研究选题</p>
+          <button onclick="generateIdeas()" id="btn-ideas" class="w-full py-2.5 px-4 rounded-xl bg-orange-50 text-orange-700 font-medium text-sm hover:bg-orange-100 transition">
+            生成想法
+          </button>
+        </div>
+      </section>
+
+      <!-- Source Selection -->
+      <section>
+        <h3 class="text-lg font-semibold text-slate-800 mb-4">选择信息源</h3>
+        <div class="grid md:grid-cols-3 gap-4">
+          <!-- GitHub -->
+          <div class="source-card glass-card rounded-2xl p-5 border border-slate-200/80 cursor-pointer"
+               onclick="toggleSource('github')" id="source-github">
+            <div class="flex items-start justify-between mb-3">
+              <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-slate-800 flex items-center justify-center">
+                  <svg class="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+                  </svg>
+                </div>
+                <div>
+                  <h4 class="font-semibold text-slate-800">GitHub</h4>
+                  <p class="text-xs text-slate-500">Trending 仓库</p>
+                </div>
+              </div>
+              <input type="checkbox" class="checkbox-custom w-5 h-5 rounded-md border-slate-300" id="checkbox-github">
+            </div>
+            <div class="space-y-2 text-sm text-slate-600">
+              <div class="flex items-center gap-2">
+                <span class="text-xs px-2 py-0.5 rounded-full bg-slate-100">语言</span>
+                <span class="text-xs" id="github-lang-display">All</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="text-xs px-2 py-0.5 rounded-full bg-slate-100">时间</span>
+                <span class="text-xs" id="github-time-display">Daily</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- HuggingFace -->
+          <div class="source-card glass-card rounded-2xl p-5 border border-slate-200/80 cursor-pointer"
+               onclick="toggleSource('huggingface')" id="source-huggingface">
+            <div class="flex items-start justify-between mb-3">
+              <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-yellow-400 flex items-center justify-center">
+                  <svg class="w-6 h-6 text-yellow-900" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+                  </svg>
+                </div>
+                <div>
+                  <h4 class="font-semibold text-slate-800">HuggingFace</h4>
+                  <p class="text-xs text-slate-500">论文与模型</p>
+                </div>
+              </div>
+              <input type="checkbox" class="checkbox-custom w-5 h-5 rounded-md border-slate-300" id="checkbox-huggingface">
+            </div>
+            <div class="space-y-2 text-sm text-slate-600">
+              <div class="flex items-center gap-2">
+                <span class="text-xs px-2 py-0.5 rounded-full bg-slate-100">内容</span>
+                <span class="text-xs" id="hf-content-display">Papers, Models</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="text-xs px-2 py-0.5 rounded-full bg-slate-100">数量</span>
+                <span class="text-xs">30 papers / 15 models</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Twitter -->
+          <div class="source-card glass-card rounded-2xl p-5 border border-slate-200/80 cursor-pointer"
+               onclick="toggleSource('twitter')" id="source-twitter">
+            <div class="flex items-start justify-between mb-3">
+              <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-black flex items-center justify-center">
+                  <svg class="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
+                  </svg>
+                </div>
+                <div>
+                  <h4 class="font-semibold text-slate-800">X / Twitter</h4>
+                  <p class="text-xs text-slate-500">关注账号动态</p>
+                </div>
+              </div>
+              <input type="checkbox" class="checkbox-custom w-5 h-5 rounded-md border-slate-300" id="checkbox-twitter">
+            </div>
+            <div class="space-y-2 text-sm text-slate-600">
+              <div class="flex items-center gap-2">
+                <span class="text-xs px-2 py-0.5 rounded-full bg-slate-100">账号</span>
+                <span class="text-xs" id="twitter-accounts-count">0 配置</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Run Status Panel -->
+      <section id="run-panel" class="hidden">
+        <div class="glass-card rounded-2xl p-6 border border-emerald-200/80 shadow-card">
+          <div class="flex items-center justify-between mb-4">
+            <div class="flex items-center gap-3">
+              <div class="w-3 h-3 rounded-full bg-emerald-500 animate-pulse-dot"></div>
+              <h3 class="font-semibold text-slate-800">正在运行</h3>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-sm text-slate-500" id="run-status-text">初始化...</span>
+              <button onclick="cancelRun()" class="text-xs px-3 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600">
+                取消
+              </button>
+            </div>
+          </div>
+          <div class="space-y-2">
+            <div class="h-2 bg-slate-100 rounded-full overflow-hidden">
+              <div id="progress-bar" class="h-full bg-gradient-to-r from-emerald-500 to-emerald-400 rounded-full transition-all duration-500" style="width: 0%"></div>
+            </div>
+            <div class="log-container bg-slate-50 rounded-lg p-3 mt-3" id="run-log"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Run Results Panel (shown after completion) -->
+      <section id="results-panel" class="hidden space-y-6">
+        <div class="flex items-center justify-between">
+          <h3 class="text-lg font-semibold text-slate-800">生成结果</h3>
+          <button onclick="closeResults()" class="text-sm px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600">
+            关闭
+          </button>
+        </div>
+        <div id="results-content" class="space-y-6">
+          <!-- Results will be rendered here -->
+        </div>
+      </section>
+    </div>
+
+    <!-- Config Tab -->
+    <div id="view-config" class="hidden space-y-6">
+      <div class="flex items-center justify-between">
+        <h2 class="text-2xl font-serif text-slate-800">配置设置</h2>
+        <button onclick="saveConfig()" id="btn-save-config" class="btn-primary px-6 py-2.5 rounded-xl text-white font-medium text-sm">
+          保存配置
+        </button>
+      </div>
+
+      <!-- LLM Config -->
+      <div class="glass-card rounded-2xl p-6 border border-slate-200/80 shadow-soft">
+        <h3 class="text-lg font-semibold text-slate-800 mb-4 flex items-center gap-2">
+          <svg class="w-5 h-5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+          </svg>
+          LLM 配置
+        </h3>
+        <div class="grid md:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1.5">Provider</label>
+            <select id="config-provider" class="w-full px-4 py-2.5 rounded-xl border border-slate-200 bg-slate-50 text-sm focus:outline-none focus:border-emerald-500 input-glow">
+              <option value="openai">OpenAI</option>
+              <option value="siliconflow">SiliconFlow</option>
+              <option value="ollama">Ollama</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1.5">Model</label>
+            <input type="text" id="config-model" placeholder="gpt-4o-mini"
+                   class="w-full px-4 py-2.5 rounded-xl border border-slate-200 bg-slate-50 text-sm focus:outline-none focus:border-emerald-500 input-glow">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1.5">Base URL</label>
+            <input type="text" id="config-base-url" placeholder="https://api.openai.com/v1"
+                   class="w-full px-4 py-2.5 rounded-xl border border-slate-200 bg-slate-50 text-sm focus:outline-none focus:border-emerald-500 input-glow">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1.5">API Key</label>
+            <input type="password" id="config-api-key" placeholder="sk-..."
+                   class="w-full px-4 py-2.5 rounded-xl border border-slate-200 bg-slate-50 text-sm focus:outline-none focus:border-emerald-500 input-glow">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1.5">Temperature</label>
+            <input type="number" id="config-temperature" min="0" max="2" step="0.1" value="0.5"
+                   class="w-full px-4 py-2.5 rounded-xl border border-slate-200 bg-slate-50 text-sm focus:outline-none focus:border-emerald-500 input-glow">
+          </div>
+        </div>
+      </div>
+
+      <!-- Email Config -->
+      <div class="glass-card rounded-2xl p-6 border border-slate-200/80 shadow-soft">
+        <h3 class="text-lg font-semibold text-slate-800 mb-4 flex items-center gap-2">
+          <svg class="w-5 h-5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+          </svg>
+          邮件配置
+        </h3>
+        <div class="grid md:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1.5">SMTP Server</label>
+            <input type="text" id="config-smtp-server" placeholder="smtp.gmail.com"
+                   class="w-full px-4 py-2.5 rounded-xl border border-slate-200 bg-slate-50 text-sm focus:outline-none focus:border-emerald-500 input-glow">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1.5">SMTP Port</label>
+            <input type="number" id="config-smtp-port" value="465"
+                   class="w-full px-4 py-2.5 rounded-xl border border-slate-200 bg-slate-50 text-sm focus:outline-none focus:border-emerald-500 input-glow">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1.5">Sender Email</label>
+            <input type="email" id="config-sender" placeholder="you@example.com"
+                   class="w-full px-4 py-2.5 rounded-xl border border-slate-200 bg-slate-50 text-sm focus:outline-none focus:border-emerald-500 input-glow">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1.5">Receiver Email</label>
+            <input type="email" id="config-receiver" placeholder="you@example.com"
+                   class="w-full px-4 py-2.5 rounded-xl border border-slate-200 bg-slate-50 text-sm focus:outline-none focus:border-emerald-500 input-glow">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1.5">Password</label>
+            <input type="password" id="config-smtp-password" placeholder="应用专用密码"
+                   class="w-full px-4 py-2.5 rounded-xl border border-slate-200 bg-slate-50 text-sm focus:outline-none focus:border-emerald-500 input-glow">
+          </div>
+        </div>
+      </div>
+
+      <!-- Source Config -->
+      <div class="glass-card rounded-2xl p-6 border border-slate-200/80 shadow-soft">
+        <h3 class="text-lg font-semibold text-slate-800 mb-4">信息源配置</h3>
+
+        <!-- GitHub Config -->
+        <div class="mb-6 pb-6 border-b border-slate-100">
+          <h4 class="font-medium text-slate-700 mb-3">GitHub</h4>
+          <div class="grid md:grid-cols-3 gap-4">
+            <div>
+              <label class="block text-xs font-medium text-slate-500 mb-1.5">语言</label>
+              <select id="config-gh-lang" class="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 text-sm">
+                <option value="all">All</option>
+                <option value="python">Python</option>
+                <option value="javascript">JavaScript</option>
+                <option value="typescript">TypeScript</option>
+                <option value="go">Go</option>
+                <option value="rust">Rust</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-slate-500 mb-1.5">时间范围</label>
+              <select id="config-gh-since" class="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 text-sm">
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+                <option value="monthly">Monthly</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-slate-500 mb-1.5">最大仓库数</label>
+              <input type="number" id="config-gh-max" value="30" min="5" max="100"
+                     class="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 text-sm">
+            </div>
+          </div>
+        </div>
+
+        <!-- HuggingFace Config -->
+        <div class="mb-6 pb-6 border-b border-slate-100">
+          <h4 class="font-medium text-slate-700 mb-3">HuggingFace</h4>
+          <div class="grid md:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-xs font-medium text-slate-500 mb-1.5">内容类型</label>
+              <div class="flex gap-3">
+                <label class="flex items-center gap-2">
+                  <input type="checkbox" id="config-hf-papers" checked class="rounded border-slate-300 text-emerald-600">
+                  <span class="text-sm">Papers</span>
+                </label>
+                <label class="flex items-center gap-2">
+                  <input type="checkbox" id="config-hf-models" checked class="rounded border-slate-300 text-emerald-600">
+                  <span class="text-sm">Models</span>
+                </label>
+              </div>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-xs font-medium text-slate-500 mb-1.5">最大论文数</label>
+                <input type="number" id="config-hf-max-papers" value="30"
+                       class="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 text-sm">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-slate-500 mb-1.5">最大模型数</label>
+                <input type="number" id="config-hf-max-models" value="15"
+                       class="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 text-sm">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Twitter Config -->
+        <div>
+          <h4 class="font-medium text-slate-700 mb-3">X / Twitter</h4>
+          <div class="space-y-3">
+            <div>
+              <label class="block text-xs font-medium text-slate-500 mb-1.5">RapidAPI Key</label>
+              <input type="password" id="config-twitter-api-key"
+                     class="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 text-sm">
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-slate-500 mb-1.5">监控账号（每行一个）</label>
+              <textarea id="config-twitter-accounts" rows="4" placeholder="elonmusk
+sama
+..."
+                        class="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 text-sm font-mono"></textarea>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Interest Profile -->
+      <div class="glass-card rounded-2xl p-6 border border-slate-200/80 shadow-soft">
+        <h3 class="text-lg font-semibold text-slate-800 mb-4">兴趣描述</h3>
+        <textarea id="config-description" rows="6"
+                  placeholder="描述你感兴趣的领域，例如：
+1. Agent Safety - 关注 AI Agent 的安全对齐
+2. Multi-modal - 多模态学习进展
+
+I'm not interested in:
+1. Crypto/Web3
+..."
+                  class="w-full px-4 py-3 rounded-xl border border-slate-200 bg-slate-50 text-sm focus:outline-none focus:border-emerald-500 input-glow resize-none"></textarea>
+        <p class="text-xs text-slate-500 mt-2">LLM 将根据此描述评估内容相关性</p>
+      </div>
+
+      <!-- Researcher Profile -->
+      <div class="glass-card rounded-2xl p-6 border border-slate-200/80 shadow-soft">
+        <h3 class="text-lg font-semibold text-slate-800 mb-4">研究者画像（可选）</h3>
+        <textarea id="config-researcher-profile" rows="6"
+                  placeholder="用于生成研究想法的详细画像，包括你的研究背景、正在进行的项目、感兴趣的研究方向等..."
+                  class="w-full px-4 py-3 rounded-xl border border-slate-200 bg-slate-50 text-sm focus:outline-none focus:border-emerald-500 input-glow resize-none"></textarea>
+      </div>
+    </div>
+
+    <!-- History Tab -->
+    <div id="view-history" class="hidden space-y-6">
+      <div class="flex items-center justify-between">
+        <h2 class="text-2xl font-serif text-slate-800">历史记录</h2>
+        <div class="flex gap-2">
+          <button onclick="loadHistory()" class="px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm hover:bg-slate-50">
+            刷新
+          </button>
+          <select id="history-filter" onchange="filterHistory()"
+                  class="px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm">
+            <option value="all">全部类型</option>
+            <option value="github">GitHub</option>
+            <option value="huggingface">HuggingFace</option>
+            <option value="twitter">Twitter</option>
+            <option value="report">报告</option>
+            <option value="ideas">研究想法</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="history-list" class="space-y-4">
+        <div class="text-center py-12 text-slate-400">
+          <svg class="w-12 h-12 mx-auto mb-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+          </svg>
+          <p>加载中...</p>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Toast Notification -->
+  <div id="toast" class="fixed bottom-4 right-4 z-50 hidden">
+    <div class="glass-card rounded-xl px-4 py-3 border border-emerald-200/80 shadow-lg flex items-center gap-3">
+      <div class="w-6 h-6 rounded-full bg-emerald-100 flex items-center justify-center">
+        <svg class="w-4 h-4 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+        </svg>
+      </div>
+      <span id="toast-message" class="text-sm font-medium text-slate-700">操作成功</span>
+    </div>
+  </div>
+
+  <!-- Result Modal -->
+  <div id="result-modal" class="fixed inset-0 z-50 hidden">
+    <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" onclick="closeResultModal()"></div>
+    <div class="absolute inset-4 md:inset-10 glass-card rounded-2xl shadow-2xl flex flex-col">
+      <div class="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+        <h3 class="font-semibold text-slate-800" id="result-title">运行结果</h3>
+        <button onclick="closeResultModal()" class="p-2 hover:bg-slate-100 rounded-lg">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+      <div class="flex-1 overflow-auto p-6" id="result-content">
+        <!-- Content here -->
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // State Management
+    const state = {
+      selectedSources: new Set(),
+      config: {},
+      history: [],
+      ws: null,
+      isRunning: false
+    };
+
+    const API_BASE = window.location.origin;
+
+    // Initialize
+    document.addEventListener('DOMContentLoaded', () => {
+      loadConfig();
+      loadHistory();
+    });
+
+    // Tab Switching
+    function switchTab(tab) {
+      document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('tab-active'));
+      document.getElementById(`tab-${tab}`).classList.add('tab-active');
+      document.querySelectorAll('[id^="view-"]').forEach(view => view.classList.add('hidden'));
+      document.getElementById(`view-${tab}`).classList.remove('hidden');
+    }
+
+    // Source Selection
+    function toggleSource(source) {
+      const checkbox = document.getElementById(`checkbox-${source}`);
+      const card = document.getElementById(`source-${source}`);
+      checkbox.checked = !checkbox.checked;
+
+      if (checkbox.checked) {
+        state.selectedSources.add(source);
+        card.classList.add('selected');
+      } else {
+        state.selectedSources.delete(source);
+        card.classList.remove('selected');
+      }
+    }
+
+    // API Functions
+    async function apiGet(path) {
+      const res = await fetch(`${API_BASE}${path}`);
+      if (!res.ok) throw new Error(await res.text());
+      return res.json();
+    }
+
+    async function apiPost(path, data) {
+      const res = await fetch(`${API_BASE}${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+      if (!res.ok) throw new Error(await res.text());
+      return res.json();
+    }
+
+    // Load Config
+    async function loadConfig() {
+      try {
+        state.config = await apiGet('/api/config');
+        populateConfigForm();
+        updateSourceDisplay();
+      } catch (e) {
+        showToast('加载配置失败: ' + e.message, 'error');
+      }
+    }
+
+    function populateConfigForm() {
+      const c = state.config;
+      document.getElementById('config-provider').value = c.provider || 'openai';
+      document.getElementById('config-model').value = c.model || '';
+      document.getElementById('config-base-url').value = c.base_url || '';
+      document.getElementById('config-api-key').value = c.api_key || '';
+      document.getElementById('config-temperature').value = c.temperature || 0.5;
+      document.getElementById('config-smtp-server').value = c.smtp_server || '';
+      document.getElementById('config-smtp-port').value = c.smtp_port || 465;
+      document.getElementById('config-sender').value = c.sender || '';
+      document.getElementById('config-receiver').value = c.receiver || '';
+      document.getElementById('config-smtp-password').value = c.smtp_password || '';
+      document.getElementById('config-gh-lang').value = c.gh_languages || 'all';
+      document.getElementById('config-gh-since').value = c.gh_since || 'daily';
+      document.getElementById('config-gh-max').value = c.gh_max_repos || 30;
+      document.getElementById('config-hf-max-papers').value = c.hf_max_papers || 30;
+      document.getElementById('config-hf-max-models').value = c.hf_max_models || 15;
+      document.getElementById('config-description').value = c.description || '';
+      document.getElementById('config-researcher-profile').value = c.researcher_profile || '';
+
+      if (c.hf_content_types) {
+        document.getElementById('config-hf-papers').checked = c.hf_content_types.includes('papers');
+        document.getElementById('config-hf-models').checked = c.hf_content_types.includes('models');
+      }
+    }
+
+    function updateSourceDisplay() {
+      document.getElementById('github-lang-display').textContent = state.config.gh_languages || 'All';
+      document.getElementById('github-time-display').textContent = state.config.gh_since || 'Daily';
+    }
+
+    // Save Config
+    async function saveConfig() {
+      const hfTypes = [];
+      if (document.getElementById('config-hf-papers').checked) hfTypes.push('papers');
+      if (document.getElementById('config-hf-models').checked) hfTypes.push('models');
+
+      const config = {
+        provider: document.getElementById('config-provider').value,
+        model: document.getElementById('config-model').value,
+        base_url: document.getElementById('config-base-url').value,
+        api_key: document.getElementById('config-api-key').value,
+        temperature: parseFloat(document.getElementById('config-temperature').value),
+        smtp_server: document.getElementById('config-smtp-server').value,
+        smtp_port: parseInt(document.getElementById('config-smtp-port').value),
+        sender: document.getElementById('config-sender').value,
+        receiver: document.getElementById('config-receiver').value,
+        smtp_password: document.getElementById('config-smtp-password').value,
+        gh_languages: document.getElementById('config-gh-lang').value,
+        gh_since: document.getElementById('config-gh-since').value,
+        gh_max_repos: parseInt(document.getElementById('config-gh-max').value),
+        hf_content_types: hfTypes,
+        hf_max_papers: parseInt(document.getElementById('config-hf-max-papers').value),
+        hf_max_models: parseInt(document.getElementById('config-hf-max-models').value),
+        description: document.getElementById('config-description').value,
+        researcher_profile: document.getElementById('config-researcher-profile').value
+      };
+
+      try {
+        await apiPost('/api/config', config);
+        state.config = config;
+        showToast('配置已保存');
+        updateSourceDisplay();
+      } catch (e) {
+        showToast('保存失败: ' + e.message, 'error');
+      }
+    }
+
+    // WebSocket Run
+    async function runWithWebSocket(request) {
+      if (state.isRunning) return;
+      state.isRunning = true;
+
+      const panel = document.getElementById('run-panel');
+      const progressBar = document.getElementById('progress-bar');
+      const statusText = document.getElementById('run-status-text');
+      const log = document.getElementById('run-log');
+
+      panel.classList.remove('hidden');
+      progressBar.style.width = '0%';
+      statusText.textContent = '连接中...';
+      log.innerHTML = '';
+
+      // Disable buttons
+      document.querySelectorAll('button[id^="btn-"]').forEach(btn => btn.disabled = true);
+
+      const wsUrl = `ws://${window.location.host}/ws/run`;
+      state.ws = new WebSocket(wsUrl);
+
+      state.ws.onopen = () => {
+        state.ws.send(JSON.stringify(request));
+      };
+
+      state.ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+
+        if (data.type === 'start') {
+          statusText.textContent = '运行中...';
+        } else if (data.type === 'log') {
+          const line = document.createElement('div');
+          line.className = 'log-line';
+          line.textContent = data.message;
+          log.appendChild(line);
+          log.scrollTop = log.scrollHeight;
+
+          // Update progress based on log content
+          if (data.message.includes('github')) progressBar.style.width = '20%';
+          else if (data.message.includes('huggingface')) progressBar.style.width = '40%';
+          else if (data.message.includes('twitter')) progressBar.style.width = '60%';
+          else if (data.message.includes('评估') || data.message.includes('Processing')) progressBar.style.width = '80%';
+          else if (data.message.includes('报告') || data.message.includes('邮件')) progressBar.style.width = '90%';
+
+        } else if (data.type === 'complete') {
+          progressBar.style.width = '100%';
+          statusText.textContent = data.success ? '完成' : '失败';
+          showToast(data.success ? '运行完成' : '运行失败', data.success ? 'success' : 'error');
+
+          if (data.success && data.files) {
+            displayRunResults(data.files, data.date);
+          }
+
+          if (data.success) loadHistory();
+          cleanupRun();
+        } else if (data.type === 'error') {
+          statusText.textContent = '错误';
+          log.innerHTML += `<div class="log-line text-red-500">Error: ${data.message}</div>`;
+          showToast('运行错误: ' + data.message, 'error');
+          cleanupRun();
+        }
+      };
+
+      state.ws.onerror = (e) => {
+        statusText.textContent = '连接错误';
+        showToast('WebSocket 连接失败', 'error');
+        cleanupRun();
+      };
+
+      state.ws.onclose = () => {
+        if (state.isRunning) cleanupRun();
+      };
+    }
+
+    function cleanupRun() {
+      state.isRunning = false;
+      if (state.ws) {
+        state.ws.close();
+        state.ws = null;
+      }
+      document.querySelectorAll('button[id^="btn-"]').forEach(btn => btn.disabled = false);
+      setTimeout(() => {
+        document.getElementById('run-panel').classList.add('hidden');
+      }, 2000);
+    }
+
+    function cancelRun() {
+      if (state.ws) {
+        state.ws.close();
+      }
+      cleanupRun();
+      showToast('已取消');
+    }
+
+    // Quick Run
+    function quickRun() {
+      if (state.selectedSources.size === 0) {
+        showToast('请至少选择一个信息源', 'warning');
+        return;
+      }
+      runWithWebSocket({
+        sources: Array.from(state.selectedSources),
+        generate_report: false,
+        generate_ideas: false,
+        save: true
+      });
+    }
+
+    function generateReport() {
+      if (state.selectedSources.size < 2) {
+        showToast('生成报告需要至少选择 2 个信息源', 'warning');
+        return;
+      }
+      runWithWebSocket({
+        sources: Array.from(state.selectedSources),
+        generate_report: true,
+        generate_ideas: false,
+        save: true
+      });
+    }
+
+    function generateIdeas() {
+      if (state.selectedSources.size === 0) {
+        showToast('请至少选择一个信息源', 'warning');
+        return;
+      }
+      if (!state.config.researcher_profile) {
+        showToast('请先在配置中填写研究者画像', 'warning');
+        switchTab('config');
+        return;
+      }
+      runWithWebSocket({
+        sources: Array.from(state.selectedSources),
+        generate_report: false,
+        generate_ideas: true,
+        save: true
+      });
+    }
+
+    // Load History
+    async function loadHistory() {
+      try {
+        state.history = await apiGet('/api/history');
+        renderHistory();
+      } catch (e) {
+        showToast('加载历史失败: ' + e.message, 'error');
+      }
+    }
+
+    function renderHistory() {
+      const container = document.getElementById('history-list');
+      const filter = document.getElementById('history-filter').value;
+
+      const filtered = filter === 'all'
+        ? state.history
+        : state.history.filter(h => h.type === filter || h.sources?.includes(filter));
+
+      if (filtered.length === 0) {
+        container.innerHTML = `
+          <div class="text-center py-12 text-slate-400">
+            <svg class="w-12 h-12 mx-auto mb-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+            <p>暂无历史记录</p>
+            <p class="text-sm mt-1">运行一次推荐任务后将在此处显示</p>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = filtered.map(item => `
+        <div class="glass-card rounded-xl p-5 border border-slate-200/80 hover:shadow-glow transition cursor-pointer"
+             onclick="viewResult('${item.type}', '${item.date}')">
+          <div class="flex items-start justify-between">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 rounded-lg ${getTypeColor(item.type)} flex items-center justify-center text-white font-medium text-sm">
+                ${getTypeIcon(item.type)}
+              </div>
+              <div>
+                <h4 class="font-semibold text-slate-800">${getTypeLabel(item.type)}</h4>
+                <p class="text-xs text-slate-500">${item.date} · ${item.sources?.join(', ') || 'N/A'}</p>
+              </div>
+            </div>
+            <span class="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-600">
+              ${item.items || '-'} 项
+            </span>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    async function viewResult(source, date) {
+      try {
+        const result = await apiGet(`/api/results/${source}/${date}`);
+        showResultModal(result);
+      } catch (e) {
+        showToast('加载结果失败: ' + e.message, 'error');
+      }
+    }
+
+    function showResultModal(result) {
+      const modal = document.getElementById('result-modal');
+      const title = document.getElementById('result-title');
+      const content = document.getElementById('result-content');
+
+      title.textContent = `${result.source} - ${result.date}`;
+
+      let html = '';
+
+      // Markdown files
+      if (result.markdown_files?.length > 0) {
+        result.markdown_files.forEach(file => {
+          html += `<div class="mb-6">
+            <h4 class="font-medium text-slate-700 mb-2">${file.name}</h4>
+            <pre class="bg-slate-50 p-4 rounded-lg text-sm overflow-auto max-h-96">${escapeHtml(file.content)}</pre>
+          </div>`;
+        });
+      }
+
+      // HTML files
+      if (result.html_files?.length > 0) {
+        result.html_files.forEach(file => {
+          html += `<div class="mb-6">
+            <h4 class="font-medium text-slate-700 mb-2">${file.name}</h4>
+            <a href="${file.url}" target="_blank" class="text-emerald-600 hover:underline">查看邮件 HTML</a>
+          </div>`;
+        });
+      }
+
+      // JSON files
+      if (result.json_files?.length > 0) {
+        html += `<div class="mb-6">
+          <h4 class="font-medium text-slate-700 mb-2">数据文件 (${result.json_files.length})</h4>
+          <div class="space-y-2">
+            ${result.json_files.map(f => `
+              <details class="bg-slate-50 rounded-lg">
+                <summary class="px-4 py-2 cursor-pointer text-sm font-medium">${f.name}</summary>
+                <pre class="px-4 pb-4 text-xs overflow-auto max-h-64">${JSON.stringify(f.data, null, 2)}</pre>
+              </details>
+            `).join('')}
+          </div>
+        </div>`;
+      }
+
+      content.innerHTML = html || '<p class="text-slate-500">无详细数据</p>';
+      modal.classList.remove('hidden');
+    }
+
+    function closeResultModal() {
+      document.getElementById('result-modal').classList.add('hidden');
+    }
+
+    function displayRunResults(files, date) {
+      const panel = document.getElementById('results-panel');
+      const content = document.getElementById('results-content');
+
+      let html = '';
+
+      // Group files by source
+      const bySource = {};
+      files.forEach(f => {
+        if (!bySource[f.source]) bySource[f.source] = [];
+        bySource[f.source].push(f);
+      });
+
+      Object.entries(bySource).forEach(([source, sourceFiles]) => {
+        html += `<div class="glass-card rounded-2xl p-6 border border-slate-200/80">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="w-8 h-8 rounded-lg ${getTypeColor(source)} flex items-center justify-center text-white font-medium text-xs">
+              ${getTypeIcon(source)}
+            </div>
+            <h4 class="font-semibold text-slate-800">${getTypeLabel(source)}</h4>
+            <span class="text-xs text-slate-500">${date}</span>
+          </div>`;
+
+        sourceFiles.forEach(file => {
+          if (file.type === 'markdown') {
+            // Render markdown as HTML (simple conversion)
+            const rendered = renderMarkdown(file.content);
+            html += `<div class="mb-4">
+              <details class="bg-slate-50 rounded-lg overflow-hidden" ${sourceFiles.length === 1 ? 'open' : ''}>
+                <summary class="px-4 py-3 cursor-pointer text-sm font-medium bg-slate-100 hover:bg-slate-200">
+                  ${file.name}
+                </summary>
+                <div class="p-4 prose prose-sm max-w-none">
+                  ${rendered}
+                </div>
+              </details>
+            </div>`;
+          } else if (file.type === 'json_list') {
+            html += `<div class="mb-4">
+              <details class="bg-slate-50 rounded-lg overflow-hidden">
+                <summary class="px-4 py-3 cursor-pointer text-sm font-medium bg-slate-100 hover:bg-slate-200">
+                  推荐项目 (${file.items.length})
+                </summary>
+                <div class="divide-y divide-slate-100">
+                  ${file.items.map((item, idx) => `
+                    <div class="p-4 hover:bg-slate-100">
+                      <div class="flex items-start justify-between gap-4">
+                        <div class="flex-1">
+                          <div class="flex items-center gap-2 mb-1">
+                            <span class="text-xs font-medium text-slate-500">#${idx + 1}</span>
+                            <span class="font-medium text-slate-800">${item.title || 'Unknown'}</span>
+                            ${item.score ? `<span class="text-xs px-2 py-0.5 rounded-full ${item.score >= 7 ? 'bg-emerald-100 text-emerald-700' : item.score >= 4 ? 'bg-yellow-100 text-yellow-700' : 'bg-slate-100 text-slate-600'}">${item.score}分</span>` : ''}
+                          </div>
+                          <p class="text-sm text-slate-600 mb-2">${item.summary || item.description || ''}</p>
+                          <div class="flex flex-wrap gap-2 text-xs">
+                            ${item.url ? `<a href="${item.url}" target="_blank" class="text-emerald-600 hover:underline">查看链接</a>` : ''}
+                            ${item.language ? `<span class="px-2 py-0.5 rounded-full bg-slate-100">${item.language}</span>` : ''}
+                            ${item.stars ? `<span class="px-2 py-0.5 rounded-full bg-slate-100">⭐ ${item.stars}</span>` : ''}
+                            ${item.stars_today ? `<span class="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600">+${item.stars_today} today</span>` : ''}
+                            ${item.upvotes ? `<span class="px-2 py-0.5 rounded-full bg-slate-100">👍 ${item.upvotes}</span>` : ''}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  `).join('')}
+                </div>
+              </details>
+            </div>`;
+          }
+        });
+
+        html += `</div>`;
+      });
+
+      content.innerHTML = html || '<p class="text-slate-500">无结果数据</p>';
+      panel.classList.remove('hidden');
+      panel.scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function closeResults() {
+      document.getElementById('results-panel').classList.add('hidden');
+    }
+
+    // Simple markdown renderer
+    function renderMarkdown(text) {
+      return text
+        .replace(/^### (.*$)/gim, '<h3 class="text-lg font-semibold mt-4 mb-2">$1</h3>')
+        .replace(/^## (.*$)/gim, '<h2 class="text-xl font-semibold mt-6 mb-3">$1</h2>')
+        .replace(/^# (.*$)/gim, '<h1 class="text-2xl font-bold mt-8 mb-4">$1</h1>')
+        .replace(/\*\*(.*)\*\*/gim, '<strong>$1</strong>')
+        .replace(/\*(.*)\*/gim, '<em>$1</em>')
+        .replace(/`([^`]+)`/gim, '<code class="bg-slate-100 px-1 py-0.5 rounded text-sm font-mono">$1</code>')
+        .replace(/\[([^\]]+)\]\(([^)]+)\)/gim, '<a href="$2" target="_blank" class="text-emerald-600 hover:underline">$1</a>')
+        .replace(/- (.*$)/gim, '<li class="ml-4">$1</li>')
+        .replace(/\n/gim, '<br>');
+    }
+
+    // Helpers
+    function getTypeColor(type) {
+      const colors = {
+        github: 'bg-slate-800', huggingface: 'bg-yellow-500', twitter: 'bg-black',
+        report: 'bg-emerald-600', ideas: 'bg-orange-500', daily: 'bg-blue-500'
+      };
+      return colors[type] || 'bg-slate-500';
+    }
+
+    function getTypeIcon(type) {
+      const icons = { github: 'GH', huggingface: 'HF', twitter: 'X', report: 'R', ideas: 'I', daily: 'D' };
+      return icons[type] || '?';
+    }
+
+    function getTypeLabel(type) {
+      const labels = {
+        github: 'GitHub 推荐', huggingface: 'HuggingFace 推荐', twitter: 'Twitter 推荐',
+        report: '综合报告', ideas: '研究想法', daily: '每日推荐'
+      };
+      return labels[type] || type;
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    function showToast(message, type = 'success') {
+      const toast = document.getElementById('toast');
+      const msg = document.getElementById('toast-message');
+
+      // Update toast style based on type
+      const colors = {
+        success: 'border-emerald-200',
+        error: 'border-red-200',
+        warning: 'border-yellow-200'
+      };
+
+      toast.querySelector('.glass-card').className = `glass-card rounded-xl px-4 py-3 border shadow-lg flex items-center gap-3 ${colors[type] || colors.success}`;
+      msg.textContent = message;
+      toast.classList.remove('hidden');
+
+      setTimeout(() => {
+        toast.classList.add('hidden');
+      }, 3000);
+    }
+  </script>
+</body>
+</html>

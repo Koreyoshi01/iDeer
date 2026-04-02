@@ -305,6 +305,11 @@ class BaseSource(ABC):
         if run_datetime is None:
             run_datetime = datetime.now(timezone.utc)
 
+        # Skip if email config is incomplete
+        if not email_config.receiver or not email_config.sender or not email_config.smtp_server:
+            print(f"[{title}] Email not sent: incomplete email configuration")
+            return
+
         def _format_addr(s):
             name, addr = parseaddr(s)
             return formataddr((Header(name, "utf-8").encode(), addr))
