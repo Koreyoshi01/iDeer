@@ -3,7 +3,7 @@
 > 这倒是提醒我了，中文名叫 i鹿。
 
 <p align="center">
-  <img src="./docs/ideer-teaser.jpg" alt="iDeer teaser" width="360" />
+  <img src="./docs/ideer.svg" alt="iDeer Icon" width="360" />
 </p>
 
 <p align="center">
