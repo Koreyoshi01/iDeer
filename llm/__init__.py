@@ -1,2 +1,6 @@
 from .GPT import GPT
-from .Ollama import Ollama
+
+try:
+    from .Ollama import Ollama
+except ModuleNotFoundError:
+    Ollama = None

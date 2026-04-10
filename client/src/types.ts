@@ -1,4 +1,4 @@
-export type SourceName = "github" | "huggingface" | "twitter" | "arxiv";
+export type SourceName = "github" | "huggingface" | "twitter" | "arxiv" | "alphaxiv";
 export type AvatarId = "0" | "1" | "2" | "3";
 
 export type DeliveryMode = "source_emails" | "combined_report" | "both";

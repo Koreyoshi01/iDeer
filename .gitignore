@@ -31,3 +31,10 @@ state/
 .client_config.json
 client/.client_config.json
 .client_logs/
+
+# Local researcher profiles (keep example templates in repo)
+profiles/description.txt
+profiles/researcher_profile.md
+profiles/x_accounts.txt
+!profiles/*.example.txt
+!profiles/*.example.md

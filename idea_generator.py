@@ -17,7 +17,7 @@ from base_source import BaseSource
 from config import CommonConfig, EmailConfig, LLMConfig
 from email_utils.idea_template import render_ideas_email
 from llm.GPT import GPT
-from llm.Ollama import Ollama
+from llm import Ollama
 
 IDEA_EMAIL_TITLE = "Daily Research Ideas"
 PUBLICATIONS_SECTION_HEADER = "## Publications"
@@ -208,7 +208,9 @@ class IdeaGenerator:
         self.idea_count = idea_count
 
         self.run_datetime = datetime.now(timezone.utc)
-        self.run_date = self.run_datetime.strftime("%Y-%m-%d")
+        self.run_local_datetime = self.run_datetime.astimezone()
+        self.run_date = self.run_local_datetime.strftime("%Y-%m-%d")
+        self.run_stamp = self.run_local_datetime.strftime("%Y-%m-%d-%H_%M_%S")
 
         if not os.path.exists(profile_path):
             raise FileNotFoundError(f"Researcher profile not found: {profile_path}")
@@ -219,7 +221,7 @@ class IdeaGenerator:
 
         base_dir = os.path.dirname(os.path.abspath(__file__))
         self.save_dir = os.path.join(base_dir, common_config.save_dir, "ideas", self.run_date)
-        self.email_cache_path = os.path.join(self.save_dir, "ideas_email.html")
+        self.email_cache_path = os.path.join(self.save_dir, f"ideas_email_{self.run_stamp}.html")
         if common_config.save:
             os.makedirs(self.save_dir, exist_ok=True)
 
@@ -227,6 +229,8 @@ class IdeaGenerator:
     def _build_model(llm_config: LLMConfig):
         provider = llm_config.provider.lower()
         if provider == "ollama":
+            if Ollama is None:
+                raise ModuleNotFoundError("ollama package is required when provider=ollama")
             return Ollama(llm_config.model)
         if provider in ("openai", "siliconflow"):
             return GPT(llm_config.model, llm_config.base_url, llm_config.api_key)
@@ -235,6 +239,7 @@ class IdeaGenerator:
     def _filter_items(self, all_recs: dict[str, list[dict]]) -> list[dict]:
         """Filter high-score items while keeping source diversity."""
         filtered: list[dict] = []
+        seen_keys: set[str] = set()
         for source_name, recs in all_recs.items():
             source_items = []
             for rec in recs:
@@ -243,7 +248,11 @@ class IdeaGenerator:
                 except (TypeError, ValueError):
                     score = 0
                 if score >= self.min_score:
+                    dedupe_key = self._dedupe_key(source_name, rec)
+                    if dedupe_key in seen_keys:
+                        continue
                     source_items.append({**rec, "_source": source_name, "score": score})
+                    seen_keys.add(dedupe_key)
 
             source_items.sort(key=lambda item: item.get("score", 0), reverse=True)
             filtered.extend(source_items)
@@ -276,6 +285,25 @@ class IdeaGenerator:
 
         return diverse
 
+    @staticmethod
+    def _dedupe_key(source_name: str, rec: dict) -> str:
+        if source_name == "alphaxiv":
+            alpha_id = str(rec.get("alpha_id", "")).strip()
+            if alpha_id:
+                return f"paper:{alpha_id}"
+        if source_name == "huggingface" and rec.get("_hf_type") == "paper":
+            paper_id = str(rec.get("id", "")).strip()
+            if paper_id:
+                return f"paper:{paper_id}"
+        if source_name == "arxiv":
+            arxiv_id = str(rec.get("arxiv_id", "")).strip()
+            if arxiv_id:
+                return f"paper:{arxiv_id}"
+        title = str(rec.get("title", "")).strip().lower()
+        if title:
+            return f"title:{title}"
+        return f"{source_name}:{id(rec)}"
+
     def _format_item_for_prompt(self, item: dict) -> str:
         source = item.get("_source", "unknown")
         title = item.get("title", "Untitled")
@@ -307,7 +335,7 @@ class IdeaGenerator:
             else "当前只有 1 个来源可用；请尽量在该来源内部做非平庸组合。"
         )
 
-        return f"""你是一位顶级 AI 研究顾问。请基于今日推荐和研究者画像，生成 {self.idea_count} 个可以直接送入 auto-research 流程的研究 idea。
+        return f"""你是一位顶级 AI 研究顾问。请基于今日推荐和研究者画像，生成 1 到 {self.idea_count} 个高质量研究 idea。
 
 ## Part 1: 今日高分推荐内容
 
@@ -320,10 +348,13 @@ class IdeaGenerator:
 ## 生成要求
 
 1. {cross_source_requirement}
-2. 不要写成简单的 “apply X to Y”。每个 idea 都要有明确 hypothesis、最小实验和 novelty estimate。
-3. 尽量把 idea 挂钩到研究者已有项目或长期研究方向。
-4. 兼顾新颖性、可做性、与研究兴趣的匹配度，排序时用 composite_score 体现。
-5. 邮件面向中文阅读，因此 title / hypothesis / min_experiment 用中文；research_direction / hypothesis_en 用英文。
+2. 不要写成简单的 “apply X to Y”。
+3. 每个 idea 都要包含：核心 hypothesis、依据来源、核心 insight、初步 plan、最小实验和 novelty estimate。
+4. 每个 idea 都必须说明它主要来自哪些内容，以及这些内容是如何被你串起来的。
+5. 初步 plan 不要求非常长，但必须具体到第一轮可以怎么做。
+6. 尽量把 idea 挂钩到研究者已有项目或长期研究方向。
+7. 兼顾新颖性、可做性、与研究兴趣的匹配度，排序时用 composite_score 体现。
+8. 邮件面向中文阅读，因此 title / hypothesis / idea_basis / core_insight / plan_outline / min_experiment 用中文；research_direction / hypothesis_en 用英文。
 6. research_direction 必须是一句简洁英文，可直接粘贴给 /idea-creator、/idea-discovery 或 /research-pipeline。
 
 ## 输出格式
@@ -338,11 +369,14 @@ class IdeaGenerator:
     "research_direction": "One-line English research direction",
     "hypothesis": "中文假设",
     "hypothesis_en": "English hypothesis",
+    "idea_basis": "这个 idea 的直接依据来自哪里，哪些 paper / repo / X 动态 / 热门趋势",
+    "core_insight": "把这些来源串起来后得到的核心洞察",
+    "plan_outline": "一个初步可行 plan，说明第一阶段怎么做、验证什么、看什么信号",
     "inspired_by": [
       {{"title": "item title", "source": "github", "url": "https://..."}}
     ],
     "connects_to_project": "ATbench_Engine / AgentDoG / ECCV_VLA / Domain-RAG / embody_bench / egocross / none",
-    "interest_area": "Agent / Safety / Trustworthy",
+    "interest_area": "RL And Policy Learning / Generative Modeling / MLLM And Unified Gen-Understand Models / Agents / Video And Embodied / Hot But Worth Tracking",
     "novelty_estimate": "HIGH / MEDIUM / LOW",
     "feasibility": "HIGH / MEDIUM / LOW",
     "composite_score": 8.5,
@@ -350,7 +384,7 @@ class IdeaGenerator:
   }}
 ]
 
-请输出 {self.idea_count} 个 idea，按 composite_score 从高到低排列。"""
+请优先输出 1-3 个真正高质量的 idea；只有当你确信还有额外强 idea 时，才扩展到 {self.idea_count} 个。按 composite_score 从高到低排列。"""
 
     @staticmethod
     def _clean_llm_json(raw: str) -> str:
@@ -400,6 +434,9 @@ class IdeaGenerator:
             "research_direction": str(idea.get("research_direction", "")).strip(),
             "hypothesis": str(idea.get("hypothesis", "")).strip(),
             "hypothesis_en": str(idea.get("hypothesis_en", "")).strip(),
+            "idea_basis": str(idea.get("idea_basis", "")).strip(),
+            "core_insight": str(idea.get("core_insight", "")).strip(),
+            "plan_outline": str(idea.get("plan_outline", "")).strip(),
             "inspired_by": inspired_by or fallback_inspired_by,
             "connects_to_project": str(idea.get("connects_to_project", "none")),
             "interest_area": str(idea.get("interest_area", "")),
@@ -463,9 +500,12 @@ class IdeaGenerator:
         json_path = os.path.join(self.save_dir, "ideas.json")
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(ideas, f, ensure_ascii=False, indent=2)
-        print(f"[IdeaGenerator] Ideas saved to {json_path}")
+        snapshot_json_path = os.path.join(self.save_dir, f"ideas_{self.run_stamp}.json")
+        with open(snapshot_json_path, "w", encoding="utf-8") as f:
+            json.dump(ideas, f, ensure_ascii=False, indent=2)
+        print(f"[IdeaGenerator] Ideas saved to {snapshot_json_path}")
 
-        md_path = os.path.join(self.save_dir, "ideas.md")
+        md_path = os.path.join(self.save_dir, f"ideas_{self.run_stamp}.md")
         with open(md_path, "w", encoding="utf-8") as f:
             f.write("# Daily Research Ideas\n")
             f.write(f"## Date: {self.run_date}\n\n")
@@ -474,6 +514,9 @@ class IdeaGenerator:
                 f.write(f"- **English Title**: {idea.get('title_en', '')}\n")
                 f.write(f"- **Research Direction**: {idea.get('research_direction', '')}\n")
                 f.write(f"- **Hypothesis**: {idea.get('hypothesis', '')}\n")
+                f.write(f"- **Basis**: {idea.get('idea_basis', '')}\n")
+                f.write(f"- **Core Insight**: {idea.get('core_insight', '')}\n")
+                f.write(f"- **Plan Outline**: {idea.get('plan_outline', '')}\n")
                 f.write(f"- **Project**: {idea.get('connects_to_project', 'N/A')}\n")
                 f.write(f"- **Area**: {idea.get('interest_area', '')}\n")
                 f.write(

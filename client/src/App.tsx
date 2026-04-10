@@ -26,6 +26,7 @@ const SOURCE_OPTIONS: Array<{ key: SourceName; label: string; description: strin
   { key: "huggingface", label: "HuggingFace", description: "论文与模型动态" },
   { key: "twitter", label: "X / Twitter", description: "账号时间线和圈层信号" },
   { key: "arxiv", label: "arXiv", description: "新论文抓取与筛选" },
+  { key: "alphaxiv", label: "alphaXiv", description: "平台热榜论文与热门讨论" },
 ];
 
 const DEFAULT_CONFIG: ConfigData = {
@@ -57,7 +58,7 @@ const DEFAULT_CONFIG: ConfigData = {
 };
 
 const DEFAULT_RUN_FORM: RunRequest = {
-  sources: ["github", "huggingface"],
+  sources: ["alphaxiv", "huggingface", "github", "arxiv"],
   generate_report: false,
   generate_ideas: false,
   save: true,

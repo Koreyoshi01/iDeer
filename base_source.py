@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from config import LLMConfig, EmailConfig, CommonConfig
 from llm.GPT import GPT
-from llm.Ollama import Ollama
+from llm import Ollama
 from email_utils.base_template import framework, get_stars, get_summary_html, render_summary_sections, get_empty_html
 from tqdm import tqdm
 import json
@@ -28,7 +28,9 @@ class BaseSource(ABC):
         self.num_workers = common_config.num_workers
         self.temperature = llm_config.temperature
         self.run_datetime = datetime.now(timezone.utc)
-        self.run_date = self.run_datetime.strftime("%Y-%m-%d")
+        self.run_local_datetime = self.run_datetime.astimezone()
+        self.run_date = self.run_local_datetime.strftime("%Y-%m-%d")
+        self.run_stamp = self.run_local_datetime.strftime("%Y-%m-%d-%H_%M_%S")
         self.description = common_config.description
         self.profile_hash = common_config.profile_hash
         self.lock = threading.Lock()
@@ -57,9 +59,19 @@ class BaseSource(ABC):
             self.save_dir = os.path.join(base_dir, common_config.save_dir, self.name, self.run_date)
             self.cache_dir = os.path.join(self.save_dir, "json")
             os.makedirs(self.cache_dir, exist_ok=True)
+        self.existing_history_ids = set()
+        self.new_history_ids = set()
+        if self.cache_dir and os.path.isdir(self.cache_dir):
+            self.existing_history_ids = {
+                os.path.splitext(name)[0]
+                for name in os.listdir(self.cache_dir)
+                if name.endswith(".json")
+            }
 
         provider = llm_config.provider.lower()
         if provider == "ollama":
+            if Ollama is None:
+                raise ModuleNotFoundError("ollama package is required when provider=ollama")
             self.model = Ollama(llm_config.model)
         elif provider in ("openai", "siliconflow"):
             self.model = GPT(llm_config.model, llm_config.base_url, llm_config.api_key)
@@ -172,6 +184,8 @@ class BaseSource(ABC):
             cached = safe_read_json(eval_path)
             if cached is not None:
                 print(f"[{self.name}] Eval cache hit: {cache_id}")
+                if isinstance(cached, dict):
+                    cached = {**cached, "_cache_id": cache_id}
                 # Mirror to history for UI
                 self._mirror_to_history(cache_id, cached)
                 return cached
@@ -181,6 +195,7 @@ class BaseSource(ABC):
                 prompt = self.build_eval_prompt(item)
                 response = self.model.inference(prompt, temperature=self.temperature)
                 result = self.parse_eval_response(item, response)
+                result["_cache_id"] = cache_id
 
                 # Write to eval cache (profile-isolated, atomic)
                 if eval_path:
@@ -208,12 +223,54 @@ class BaseSource(ABC):
         if not self.cache_dir:
             return
         history_path = os.path.join(self.cache_dir, f"{cache_id}.json")
+        if os.path.exists(history_path):
+            return
         try:
             with self.lock:
+                self.new_history_ids.add(cache_id)
                 with open(history_path, "w", encoding="utf-8") as f:
                     json.dump(result, f, ensure_ascii=False, indent=2)
         except OSError:
             pass
+
+    def _reconfigure_storage(self, history_parts: list[str], scope_key: str):
+        """Switch history/cache storage to a custom scope such as weekly buckets."""
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+
+        self.fetch_cache_dir = os.path.join(
+            base_dir, self.common_config.state_dir, "fetch_cache", *history_parts, scope_key
+        )
+        os.makedirs(self.fetch_cache_dir, exist_ok=True)
+
+        self.eval_cache_dir = None
+        if self.profile_hash:
+            self.eval_cache_dir = os.path.join(
+                base_dir,
+                self.common_config.state_dir,
+                "eval_cache",
+                *history_parts,
+                scope_key,
+                self.profile_hash,
+            )
+            os.makedirs(self.eval_cache_dir, exist_ok=True)
+
+        self.save_dir = None
+        self.cache_dir = None
+        if self.common_config.save:
+            self.save_dir = os.path.join(base_dir, self.common_config.save_dir, *history_parts, scope_key)
+            self.cache_dir = os.path.join(self.save_dir, "json")
+            os.makedirs(self.cache_dir, exist_ok=True)
+        self.existing_history_ids = set()
+        self.new_history_ids = set()
+        if self.cache_dir and os.path.isdir(self.cache_dir):
+            self.existing_history_ids = {
+                os.path.splitext(name)[0]
+                for name in os.listdir(self.cache_dir)
+                if name.endswith(".json")
+            }
+
+    def delta_snapshot_mode(self) -> bool:
+        return False
 
     def get_recommendations(self) -> list[dict]:
         raw_items = self.fetch_items()
@@ -232,18 +289,24 @@ class BaseSource(ABC):
                 if result:
                     recommendations.append(result)
 
-        limit = min(self.get_max_items(), self.MAX_RECOMMEND)
         recommendations = sorted(
             recommendations, key=lambda x: x.get("score", 0), reverse=True
-        )[:limit]
+        )
+        if self.delta_snapshot_mode():
+            recommendations = [
+                item for item in recommendations
+                if item.get("_cache_id", "") in self.new_history_ids
+            ]
+        limit = min(self.get_max_items(), self.MAX_RECOMMEND)
+        recommendations = recommendations[:limit]
 
-        if self.save_dir:
+        if self.save_dir and recommendations:
             self._save_markdown(recommendations)
 
         return recommendations
 
     def _save_markdown(self, recommendations: list[dict]):
-        save_path = os.path.join(self.save_dir, f"{self.run_date}.md")
+        save_path = os.path.join(self.save_dir, f"{self.run_stamp}.md")
         with open(save_path, "w", encoding="utf-8") as f:
             f.write(f"# {self.default_title} Recommendations\n")
             f.write(f"## Date: {self.run_date}\n\n")
@@ -267,6 +330,34 @@ class BaseSource(ABC):
                 break
         return fields
 
+    @staticmethod
+    def _method_first_summary_instruction(source_label: str, score_label: str = "相关性") -> str:
+        return f"""
+            请评估这个{source_label}，并按下面结构输出：
+            1. 用中文先给出一句话结论（TLDR），要求便于快速理解。
+            2. 说明它解决什么问题，或它在说什么核心事情。
+            3. 说明方法核心 / 系统核心 / pipeline / training recipe（如果是论文或技术内容必须尽量写清楚）。
+            4. 说明它与已有方法相比新在哪里，或者为什么它今天值得看。
+            5. 说明它与我研究方向的关系，并给出 0-10 的{score_label}评分。
+
+            请按以下 JSON 格式给出你的回答：
+            {{
+                "summary": "使用一个连续的中文段落，但内部必须自然覆盖：一句话结论、问题、方法核心、pipeline/training recipe、新意、值得关注的原因、与我方向的关系。不要嵌套 JSON。",
+                "relevance": <你的评分>
+            }}
+
+            重要要求：
+            - summary 必须是纯文本字符串，不要返回嵌套 JSON 或字典。
+            - 不要空泛地说“提出了一个新方法”。请尽量说清楚方法由哪些关键模块或训练阶段组成。
+            - 如果是博客、推文、repo 或新闻，没有严格训练流程，也要尽量说清楚它的系统流程、使用方式、工作机制或事件脉络。
+            - 请根据你自己给出的评分控制详略：
+              - 0-4 分：保持简洁，但仍要说清问题和核心机制，不要空泛。
+              - 5-7 分：给出中等密度说明，至少点明方法和基本 pipeline。
+              - 8-10 分：给出更详细的 method/pipeline/training recipe，把更多注意力放在高相关高质量内容上。
+            - 使用中文回答,同时保留cs专业术语(英文)。
+            - 直接返回 JSON，不要额外解释。
+        """
+
     def summarize(self, recommendations: list[dict]) -> str:
         overview = self.build_summary_overview(recommendations)
         fields = self._parse_interest_fields()
@@ -289,8 +380,10 @@ class BaseSource(ABC):
                   <li class="summary-item">
                     <div class="summary-item__header"><span class="summary-item__title">标题/名称</span><span class="summary-pill">类型</span></div>
                     <p class="summary-item__stats">⭐ XXX stars (+YYY today) 或 👍 ZZ upvotes 或 ❤️ NN likes</p>
-                    <p><strong>推荐理由：</strong>...</p>
-                    <p><strong>关键亮点：</strong>...</p>
+                    <p><strong>一句话结论：</strong>...</p>
+                    <p><strong>问题与方法：</strong>...</p>
+                    <p><strong>Pipeline / 训练配方：</strong>...</p>
+                    <p><strong>为什么值得看：</strong>...</p>
                   </li>
                 </ol>
                 <p><em>如果今天没有与此方向相关的内容，请写"今日暂无相关内容"。</em></p>
@@ -315,6 +408,7 @@ class BaseSource(ABC):
 
             用中文撰写内容。每个方向 section 中的推荐项请包含推荐理由和关键亮点。
             重要：每个推荐项必须包含真实的互动数据（如 GitHub 项目的 stars/today stars、论文的 upvotes、模型的 likes/downloads、推文的点赞/转发），从上面的摘要中提取，放在 <p class="summary-item__stats"> 标签中。禁止省略此数据行。
+            重要：不要只写空泛趋势判断。请尽量说清每个推荐项在“做什么、怎么做、为什么值得看”。
             """
         else:
             template = self.get_summary_prompt_template()
@@ -366,7 +460,7 @@ class BaseSource(ABC):
 
         # Save to history as a snapshot (not used as cache)
         if self.save_dir:
-            email_path = os.path.join(self.save_dir, f"{self.name}_email.html")
+            email_path = os.path.join(self.save_dir, f"{self.name}_email_{self.run_stamp}.html")
             os.makedirs(os.path.dirname(email_path), exist_ok=True)
             with open(email_path, "w", encoding="utf-8") as f:
                 f.write(email_html)

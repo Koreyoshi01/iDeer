@@ -12,7 +12,7 @@ from base_source import BaseSource
 from config import CommonConfig, EmailConfig, LLMConfig
 from email_utils.report_template import render_report_email
 from llm.GPT import GPT
-from llm.Ollama import Ollama
+from llm import Ollama
 
 REPORT_EMAIL_TITLE = "Daily Personal Briefing"
 
@@ -43,13 +43,15 @@ class ReportGenerator:
         self.idea_count = idea_count
 
         self.run_datetime = datetime.now(timezone.utc)
-        self.run_date = self.run_datetime.strftime("%Y-%m-%d")
+        self.run_local_datetime = self.run_datetime.astimezone()
+        self.run_date = self.run_local_datetime.strftime("%Y-%m-%d")
+        self.run_stamp = self.run_local_datetime.strftime("%Y-%m-%d-%H_%M_%S")
 
         self.model = self._build_model(llm_config)
 
         base_dir = os.path.dirname(os.path.abspath(__file__))
         self.save_dir = os.path.join(base_dir, common_config.save_dir, "reports", self.run_date)
-        self.email_cache_path = os.path.join(self.save_dir, "report.html")
+        self.email_cache_path = os.path.join(self.save_dir, f"report_{self.run_stamp}.html")
 
         if common_config.save:
             os.makedirs(self.save_dir, exist_ok=True)
@@ -58,6 +60,8 @@ class ReportGenerator:
     def _build_model(llm_config: LLMConfig):
         provider = llm_config.provider.lower()
         if provider == "ollama":
+            if Ollama is None:
+                raise ModuleNotFoundError("ollama package is required when provider=ollama")
             return Ollama(llm_config.model)
         if provider in ("openai", "siliconflow"):
             return GPT(llm_config.model, llm_config.base_url, llm_config.api_key)
@@ -78,6 +82,29 @@ class ReportGenerator:
         return text[: limit - 3].rstrip() + "..."
 
     @staticmethod
+    def _dedupe_key(source_name: str, rec: dict) -> str:
+        if source_name == "alphaxiv":
+            paper_id = str(rec.get("alpha_id", "")).strip()
+            if paper_id:
+                return f"paper:{paper_id}"
+        if source_name == "huggingface" and rec.get("_hf_type") == "paper":
+            paper_id = str(rec.get("id", "")).strip()
+            if paper_id:
+                return f"paper:{paper_id}"
+        if source_name == "arxiv":
+            paper_id = str(rec.get("arxiv_id", "")).strip()
+            if paper_id:
+                return f"paper:{paper_id}"
+        if source_name == "semanticscholar":
+            title = str(rec.get("title", "")).strip().lower()
+            if title:
+                return f"paper-title:{title}"
+        title = str(rec.get("title", "")).strip().lower()
+        if title:
+            return f"title:{title}"
+        return f"{source_name}:{id(rec)}"
+
+    @staticmethod
     def _format_time(text: str) -> str:
         raw = str(text or "").strip()
         if not raw:
@@ -91,7 +118,10 @@ class ReportGenerator:
         source_label = {
             "github": "GitHub",
             "huggingface": "HuggingFace",
+            "alphaxiv": "alphaXiv",
             "twitter": "X/Twitter",
+            "arxiv": "arXiv",
+            "semanticscholar": "Semantic Scholar",
         }.get(source_name, source_name)
         score = self._safe_float(rec.get("score", 0))
         summary = str(rec.get("summary", "")).strip()
@@ -143,6 +173,28 @@ class ReportGenerator:
                     f"likes={int(rec.get('likes', 0) or 0)}, "
                     f"downloads={int(rec.get('downloads', 0) or 0)}"
                 )
+        elif source_name == "alphaxiv":
+            normalized["category"] = str(rec.get("sort", "Hot")).strip() or "Hot"
+            normalized["entity"] = str(rec.get("alpha_id", rec.get("title", ""))).strip()
+            tags = ", ".join(str(x).strip() for x in rec.get("tags", [])[:6] if str(x).strip())
+            normalized["detail"] = " / ".join(
+                part
+                for part in [
+                    self._truncate(rec.get("summary", ""), 260),
+                    tags,
+                ]
+                if part
+            )
+            normalized["metrics"] = (
+                f"likes={int(rec.get('likes', 0) or 0)}, "
+                f"resources={int(rec.get('resource_count', 0) or 0)}, "
+                f"views={int(rec.get('view_count', 0) or 0)}"
+            )
+        elif source_name in {"arxiv", "semanticscholar"}:
+            normalized["entity"] = str(rec.get("arxiv_id", rec.get("paper_id", rec.get("title", "")))).strip()
+            normalized["detail"] = self._truncate(rec.get("abstract", ""), 260)
+            if source_name == "semanticscholar":
+                normalized["metrics"] = f"citations={int(rec.get('citation_count', 0) or 0)}"
         elif source_name == "twitter":
             author = str(rec.get("author_name", rec.get("author_username", ""))).strip()
             handle = str(rec.get("author_username", "")).strip()
@@ -166,13 +218,41 @@ class ReportGenerator:
 
     def _filter_items(self) -> list[dict]:
         normalized: list[dict] = []
+        dedupe_priority = {
+            "alphaxiv": 4,
+            "huggingface": 3,
+            "arxiv": 2,
+            "semanticscholar": 1,
+            "github": 1,
+            "twitter": 1,
+        }
+        best_by_key: dict[str, dict] = {}
         for source_name, recs in self.all_recs.items():
             source_items = [self._normalize_item(source_name, rec) for rec in recs]
             source_items.sort(key=lambda item: item.get("score", 0), reverse=True)
             qualified = [item for item in source_items if item.get("score", 0) >= self.min_score]
             if not qualified:
                 qualified = source_items[: min(3, len(source_items))]
-            normalized.extend(qualified)
+            for rec, item in zip(recs, source_items):
+                if item not in qualified:
+                    continue
+                key = self._dedupe_key(source_name, rec)
+                current = best_by_key.get(key)
+                if current is None:
+                    best_by_key[key] = item
+                    continue
+                current_rank = (
+                    current.get("score", 0),
+                    dedupe_priority.get(str(current.get("source", "")), 0),
+                )
+                candidate_rank = (
+                    item.get("score", 0),
+                    dedupe_priority.get(source_name, 0),
+                )
+                if candidate_rank > current_rank:
+                    best_by_key[key] = item
+
+        normalized.extend(best_by_key.values())
 
         if not normalized:
             return []
@@ -245,12 +325,16 @@ Curated source material for today:
 {items_text}
 
 Your job:
-1. Infer the 3-{self.theme_count} most important storylines across the materials.
-2. Write the first half like a coherent human-readable report, not a feed dump, not account-by-account notes, and not a sequence of isolated bullets.
-3. Use the back half to provide your own interpretation, short-horizon predictions, and concrete ideas.
-4. Prefer cross-source synthesis when possible. Connect social signals, repos, papers, and models into a single narrative.
-5. Be explicit about uncertainty. Separate observed facts from inference.
-6. Do not invent evidence. Every concrete claim should be grounded in the provided material.
+1. First write a top-level overview of today's most important developments.
+2. Then organize the report into exactly four sections when evidence exists:
+   - Platform Hot Papers
+   - Direction-Strong Picks
+   - X Latest / Hot Dynamics
+   - GitHub / HuggingFace / Resource Trends
+3. Prefer cross-source synthesis when possible. Connect social signals, repos, papers, and models into a single narrative.
+4. Be explicit about uncertainty. Separate observed facts from inference.
+5. Do not invent evidence. Every concrete claim should be grounded in the provided material.
+6. End with a synthesis that connects the sections, then produce a small set of high-quality research ideas.
 
 Output strict JSON only. No markdown fence. No extra text.
 
@@ -261,11 +345,11 @@ Schema:
   "opening": "2-3 connected Chinese paragraphs that read like an analyst briefing",
   "themes": [
     {{
-      "title": "Short Chinese theme title",
-      "narrative": "One substantial Chinese paragraph",
+      "title": "Use one of: 平台热榜论文 / 强相关方向精选 / X最新与热门动态 / GitHub与HuggingFace资源趋势",
+      "narrative": "One substantial Chinese section narrative",
       "signals": [
         {{
-          "source": "github/twitter/huggingface",
+          "source": "github/twitter/huggingface/arxiv/semanticscholar",
           "title": "signal title",
           "why_it_matters": "one-sentence Chinese significance",
           "url": "https://..."
@@ -274,8 +358,8 @@ Schema:
     }}
   ],
   "interpretation": {{
-    "thesis": "1-2 Chinese paragraphs of interpretation",
-    "implications": "1 Chinese paragraph on what this may imply next"
+    "thesis": "1-2 Chinese paragraphs that connect the four sections into a coherent synthesis",
+    "implications": "1 Chinese paragraph on what is changing next and what deserves follow-up"
   }},
   "predictions": [
     {{
@@ -288,8 +372,9 @@ Schema:
   "ideas": [
     {{
       "title": "Chinese idea title",
-      "detail": "Chinese idea description",
-      "why_now": "Why this is timely now"
+      "detail": "Chinese idea description with core method intuition",
+      "why_now": "Why this is timely now",
+      "basis": "What papers/signals this idea is based on"
     }}
   ],
   "watchlist": [
@@ -301,11 +386,13 @@ Schema:
 }}
 
 Requirements:
+- Use the four section titles above when evidence exists; if one section has no real evidence, omit it rather than inventing content.
 - Keep "themes" to at most {self.theme_count}.
 - Keep "predictions" to exactly {self.prediction_count} if enough evidence exists, otherwise fewer.
 - Keep "ideas" to exactly {self.idea_count} if enough evidence exists, otherwise fewer.
 - In the opening and interpretation, write fluent continuous prose, not bullet fragments.
 - In the signals list, prefer the strongest evidence rather than exhaustive coverage.
+- For papers and technical posts, favor TLDR + method/pipeline explanations over vague trend talk.
 """
 
     @staticmethod
@@ -429,6 +516,7 @@ Requirements:
                     "title": idea_title,
                     "detail": str(idea.get("detail", "")).strip(),
                     "why_now": str(idea.get("why_now", "")).strip(),
+                    "basis": str(idea.get("basis", "")).strip(),
                 }
             )
         ideas = ideas[: self.idea_count]
@@ -508,9 +596,12 @@ Requirements:
         json_path = os.path.join(self.save_dir, "report.json")
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(report, f, ensure_ascii=False, indent=2)
-        print(f"[ReportGenerator] JSON saved to {json_path}")
+        snapshot_json_path = os.path.join(self.save_dir, f"report_{self.run_stamp}.json")
+        with open(snapshot_json_path, "w", encoding="utf-8") as f:
+            json.dump(report, f, ensure_ascii=False, indent=2)
+        print(f"[ReportGenerator] JSON saved to {snapshot_json_path}")
 
-        md_path = os.path.join(self.save_dir, "report.md")
+        md_path = os.path.join(self.save_dir, f"report_{self.run_stamp}.md")
         with open(md_path, "w", encoding="utf-8") as f:
             f.write(f"# {report.get('report_title', self.report_title)}\n")
             subtitle = str(report.get("subtitle", "")).strip()
@@ -576,6 +667,8 @@ Requirements:
                         f.write(f"{idea.get('detail')}\n\n")
                     if idea.get("why_now"):
                         f.write(f"- 为什么是现在：{idea.get('why_now')}\n\n")
+                    if idea.get("basis"):
+                        f.write(f"- 依据：{idea.get('basis')}\n\n")
 
             watchlist = report.get("watchlist") or []
             if watchlist:

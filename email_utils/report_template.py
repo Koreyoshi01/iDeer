@@ -11,6 +11,9 @@ def _source_badge(source: str) -> tuple[str, str]:
     mapping = {
         "github": ("GitHub", "#24292e"),
         "huggingface": ("HuggingFace", "#ff6f00"),
+        "alphaxiv": ("alphaXiv", "#9d345b"),
+        "arxiv": ("arXiv", "#b31b1b"),
+        "semanticscholar": ("Semantic Scholar", "#6c3ec1"),
         "twitter": ("X/Twitter", "#1d9bf0"),
     }
     return mapping.get(str(source or "").lower(), (str(source or "source"), "#6b7280"))
@@ -53,6 +56,7 @@ def _render_idea(idea: dict) -> str:
     title = _escape(idea.get("title", "Untitled"))
     detail = _escape(idea.get("detail", ""))
     why_now = _escape(idea.get("why_now", ""))
+    basis = _escape(idea.get("basis", ""))
     return f"""
     <div style="padding:18px 20px;border-radius:16px;background:linear-gradient(180deg,#fffaf0,#ffffff);
                 border:1px solid #f1e2bf;margin-bottom:14px;">
@@ -61,6 +65,9 @@ def _render_idea(idea: dict) -> str:
       <div style="margin-top:12px;padding:10px 12px;background:#fff7ed;border-radius:10px;
                   font-size:13px;line-height:1.7;color:#9a3412;">
         为什么是现在：{why_now}
+      </div>
+      <div style="margin-top:10px;font-size:13px;line-height:1.7;color:#6b4f2a;">
+        依据：{basis}
       </div>
     </div>
     """

@@ -1,4 +1,3 @@
-import json
 import sys
 import tempfile
 import unittest
@@ -22,17 +21,49 @@ class DummyModel:
         return self.response
 
 
-def load_sample_recommendations(date: str = "2026-03-06") -> dict[str, list[dict]]:
-    history_dir = ROOT / "history"
-    all_recs = {}
-    for source in ("github", "huggingface", "twitter"):
-        json_dir = history_dir / source / date / "json"
-        source_items = []
-        for json_file in sorted(json_dir.glob("*.json"))[:8]:
-            with open(json_file, "r", encoding="utf-8") as f:
-                source_items.append(json.load(f))
-        all_recs[source] = source_items
-    return all_recs
+def load_sample_recommendations() -> dict[str, list[dict]]:
+    return {
+        "github": [
+            {
+                "title": "AgentLab",
+                "repo_name": "openai/agentlab",
+                "summary": "TLDR：这是一个面向工具使用 Agent 的实验平台，强调多步决策和任务执行。",
+                "url": "https://github.com/openai/agentlab",
+                "score": 8.8,
+                "stars": 5200,
+                "stars_today": 340,
+            },
+            {
+                "title": "DiffusionPolicyX",
+                "repo_name": "robot/diffusion-policy-x",
+                "summary": "TLDR：把 diffusion policy 用到复杂控制任务，强调稳定训练和部署。",
+                "url": "https://github.com/robot/diffusion-policy-x",
+                "score": 7.6,
+                "stars": 1800,
+                "stars_today": 120,
+            },
+        ],
+        "huggingface": [
+            {
+                "title": "Unified MLLM Reasoner",
+                "summary": "TLDR：一个生成-理解统一的 MLLM，兼顾多模态理解和生成。",
+                "url": "https://huggingface.co/papers/1234.5678",
+                "score": 8.5,
+                "upvotes": 91,
+                "_hf_type": "paper",
+            }
+        ],
+        "twitter": [
+            {
+                "title": "@researcher: New RL post-training thread",
+                "summary": "TLDR：一条关于 RL 后训练与蒸馏结合的高信息密度线程，强调实践 recipe。",
+                "url": "https://x.com/researcher/status/1",
+                "score": 7.9,
+                "likes": 440,
+                "retweets": 88,
+            }
+        ],
+    }
 
 
 class IdeaGeneratorTest(unittest.TestCase):
@@ -77,6 +108,9 @@ class IdeaGeneratorTest(unittest.TestCase):
                 "research_direction": "Benchmark agent memory editing under adversarial task drift",
                 "hypothesis": "如果显式建模记忆写入与安全冲突，Agent 的长程任务鲁棒性会更高",
                 "hypothesis_en": "Explicitly modeling the conflict between memory writes and safety constraints improves long-horizon robustness.",
+                "idea_basis": "来自 GitHub 的 AgentLab、HuggingFace 论文 Unified MLLM Reasoner，以及 X 上关于 RL 后训练的线程。",
+                "core_insight": "把 agent memory control、统一多模态推理和 RL 后训练校准放到同一评测框架里，可以更早暴露长期任务中的错误传播。",
+                "plan_outline": "先做一个最小评测基准，比较无约束 memory、规则约束 memory 和 RL 后训练 memory 三种方案。",
                 "inspired_by": [
                   {"title": "agentscope-ai/ReMe", "source": "github", "url": "https://github.com/agentscope-ai/ReMe"}
                 ],
@@ -99,6 +133,8 @@ class IdeaGeneratorTest(unittest.TestCase):
         self.assertEqual(ideas[0]["feasibility"], "HIGH")
         self.assertEqual(ideas[0]["composite_score"], 8.7)
         self.assertIn("ATbench_Engine", ideas[0]["connects_to_project"])
+        self.assertIn("AgentLab", ideas[0]["idea_basis"])
+        self.assertIn("最小评测基准", ideas[0]["plan_outline"])
 
     def test_save_and_render_email_write_artifacts(self):
         ideas = [
@@ -109,6 +145,9 @@ class IdeaGeneratorTest(unittest.TestCase):
                 "research_direction": "Benchmark agent memory editing under adversarial task drift",
                 "hypothesis": "如果显式建模记忆写入与安全冲突，Agent 的长程任务鲁棒性会更高",
                 "hypothesis_en": "Explicitly modeling the conflict between memory writes and safety constraints improves long-horizon robustness.",
+                "idea_basis": "来自多源日报的 agent、MLLM 与 RL 后训练线索。",
+                "core_insight": "把记忆控制和后训练结合进统一评测框架。",
+                "plan_outline": "先构建小规模 benchmark，再对比三种 memory 策略。",
                 "inspired_by": [
                     {
                         "title": "agentscope-ai/ReMe",
@@ -133,7 +172,7 @@ class IdeaGeneratorTest(unittest.TestCase):
             html = self.generator.render_email(ideas)
 
             self.assertTrue((Path(tmpdir) / "ideas.json").exists())
-            self.assertTrue((Path(tmpdir) / "ideas.md").exists())
+            self.assertTrue(list(Path(tmpdir).glob("ideas_*.md")))
             self.assertTrue((Path(tmpdir) / "ideas_email.html").exists())
             self.assertIn("/idea-from-daily", html)
 

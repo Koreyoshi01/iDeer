@@ -1,10 +1,10 @@
-"""
-Fetch HuggingFace Daily Papers and Trending Models
-"""
+"""Fetch HuggingFace daily/weekly papers and trending models."""
+
+import re
+from urllib.parse import urljoin
 
 import requests
 from bs4 import BeautifulSoup
-import re
 
 
 def get_daily_papers(max_results: int = 50) -> list:
@@ -55,6 +55,117 @@ def get_daily_papers(max_results: int = 50) -> list:
             "arxiv_id": arxiv_id,
         }
         papers.append(paper_info)
+
+    return papers
+
+
+def _get_arxiv_abstract(arxiv_id: str) -> str:
+    if not arxiv_id:
+        return ""
+    try:
+        response = requests.get(f"https://arxiv.org/abs/{arxiv_id}", timeout=30)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, "html.parser")
+        abstract_tag = soup.find("blockquote", class_="abstract")
+        if not abstract_tag:
+            return ""
+        return abstract_tag.get_text(" ", strip=True).replace("Abstract:", "").strip()
+    except Exception:
+        return ""
+
+
+def get_weekly_papers(week_id: str, max_results: int = 50) -> list:
+    """Fetch weekly HuggingFace papers from a specific week page."""
+    url = f"https://huggingface.co/papers/week/{week_id}"
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36"
+        )
+    }
+
+    try:
+        response = requests.get(url, headers=headers, timeout=30)
+        response.raise_for_status()
+    except Exception as e:
+        print(f"Failed to fetch weekly papers page: {e}")
+        return []
+
+    soup = BeautifulSoup(response.text, "html.parser")
+    papers = []
+    seen_ids: set[str] = set()
+
+    for title_link in soup.find_all("a", href=True):
+        href = title_link.get("href", "")
+        if "#" in href:
+            continue
+        if not re.match(r"^/papers/[^/]+$", href) or href == "/papers/trending":
+            continue
+
+        paper_id = href.split("/papers/", 1)[-1].strip()
+        if not paper_id or paper_id in seen_ids:
+            continue
+
+        article = title_link.find_parent("article")
+        if article is None:
+            continue
+
+        title_node = article.find("h3")
+        title = title_node.get_text(" ", strip=True) if title_node else title_link.get_text(" ", strip=True)
+
+        submitter = ""
+        submitter_label = article.find(string=re.compile(r"Submitted by", re.IGNORECASE))
+        if submitter_label:
+            parent = submitter_label.parent
+            if parent:
+                sibling_link = parent.find_next("a")
+                if sibling_link:
+                    submitter = sibling_link.get_text(" ", strip=True)
+
+        upvotes = 0
+        vote_link = article.find("a", href=lambda value: isinstance(value, str) and value.startswith("/login?next=%2Fpapers%2F"))
+        if vote_link:
+            try:
+                upvotes = int(vote_link.get_text(" ", strip=True) or 0)
+            except ValueError:
+                upvotes = 0
+
+        org_name = ""
+        org_link = article.find("a", href=lambda value: isinstance(value, str) and value.startswith("/") and not value.startswith("/papers/") and not value.startswith("/login"))
+        if org_link:
+            org_name = org_link.get_text(" ", strip=True)
+
+        counts = []
+        for link in article.find_all("a", href=True):
+            if link.get("href", "").startswith(f"/papers/{paper_id}"):
+                text = link.get_text(" ", strip=True)
+                if text.isdigit():
+                    counts.append(int(text))
+        discussion_count = counts[-1] if counts else 0
+        resource_count = counts[0] if len(counts) > 1 else 0
+
+        abstract = _get_arxiv_abstract(paper_id)
+
+        paper_info = {
+            "id": paper_id,
+            "title": title or "No title available",
+            "abstract": abstract or "No abstract available",
+            "authors": [],
+            "upvotes": upvotes,
+            "paper_url": urljoin("https://huggingface.co", href),
+            "arxiv_id": paper_id,
+            "hf_period": "weekly",
+            "hf_week": week_id,
+            "submitter": submitter,
+            "org_name": org_name,
+            "discussion_count": discussion_count,
+            "resource_count": resource_count,
+        }
+        papers.append(paper_info)
+        seen_ids.add(paper_id)
+
+        if len(papers) >= max_results:
+            break
 
     return papers
 

@@ -770,10 +770,29 @@ def get_history():
 
         source_name = source_dir.name
 
-        for date_dir in source_dir.iterdir():
-            if not date_dir.is_dir():
+        for entry in source_dir.iterdir():
+            if not entry.is_dir():
                 continue
 
+            if entry.name in {"weekly", "daily"}:
+                for scoped_dir in entry.iterdir():
+                    if not scoped_dir.is_dir():
+                        continue
+                    date_str = scoped_dir.name
+                    has_results = list(scoped_dir.glob("*.md")) or list(scoped_dir.glob("*.html"))
+                    json_files = list(scoped_dir.glob("json/*.json"))
+                    if has_results or json_files:
+                        history.append({
+                            "id": f"{source_name}_{entry.name}_{date_str}",
+                            "type": f"{source_name}_{entry.name}",
+                            "date": date_str,
+                            "sources": [source_name.replace("_", ", ")],
+                            "items": len(json_files),
+                            "path": str(scoped_dir.relative_to(PROJECT_ROOT)),
+                        })
+                continue
+
+            date_dir = entry
             date_str = date_dir.name
             has_results = list(date_dir.glob("*.md")) or list(date_dir.glob("*.html"))
             json_files = list(date_dir.glob("json/*.json"))
@@ -795,7 +814,14 @@ def get_history():
 @app.get("/api/results/{source}/{date}")
 def get_results(source: str, date: str):
     """获取某天的详细结果"""
-    result_dir = HISTORY_DIR / source / date
+    if source.endswith("_weekly"):
+        base_source = source[: -len("_weekly")]
+        result_dir = HISTORY_DIR / base_source / "weekly" / date
+    elif source.endswith("_daily"):
+        base_source = source[: -len("_daily")]
+        result_dir = HISTORY_DIR / base_source / "daily" / date
+    else:
+        result_dir = HISTORY_DIR / source / date
 
     if not result_dir.exists():
         return JSONResponse({"error": "Not found"}, status_code=404)
@@ -834,7 +860,14 @@ def get_results(source: str, date: str):
 @app.get("/api/file/{source}/{date}/{filename}")
 def get_file(source: str, date: str, filename: str):
     """获取文件内容"""
-    file_path = HISTORY_DIR / source / date / filename
+    if source.endswith("_weekly"):
+        base_source = source[: -len("_weekly")]
+        file_path = HISTORY_DIR / base_source / "weekly" / date / filename
+    elif source.endswith("_daily"):
+        base_source = source[: -len("_daily")]
+        file_path = HISTORY_DIR / base_source / "daily" / date / filename
+    else:
+        file_path = HISTORY_DIR / source / date / filename
 
     if not file_path.exists():
         return JSONResponse({"error": "Not found"}, status_code=404)

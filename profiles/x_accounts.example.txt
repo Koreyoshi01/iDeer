@@ -1,0 +1,7 @@
+# One account per line, without quotes.
+# Remove leading @ if you like; the loader accepts both forms.
+
+openai
+huggingface
+karpathy
+ylecun

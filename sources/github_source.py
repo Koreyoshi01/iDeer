@@ -100,19 +100,22 @@ class GitHubSource(BaseSource):
         )
         prompt += """
             请评估这个项目：
-            1. 用中文简要总结这个项目的主要功能和价值。
-            2. 判断项目类型（工具/框架/库/应用/其他）。
-            3. 评估这个项目与我兴趣领域的相关性，并给出 0-10 的评分。其中 0 表示完全不相关，10 表示高度相关。
-            4. 列出 2-3 个项目的亮点特性。
+            1. 先给一句话结论（TLDR），要求直观易懂。
+            2. 说明这个项目解决什么问题、主要做什么。
+            3. 说明它的系统结构、工作流程、关键模块或典型使用 pipeline。
+            4. 判断项目类型（工具/框架/库/应用/模型系统/其他）。
+            5. 评估这个项目与我兴趣领域的相关性，并给出 0-10 的评分。
+            6. 列出 2-3 个真正值得看的亮点，不要空泛。
 
             请按以下 JSON 格式给出你的回答：
             {
-                "summary": "一段纯文本的中文总结（不要嵌套JSON/dict，直接写一段话）",
-                "category": "工具/框架/库/应用/其他",
+                "summary": "一个连续的中文段落，内部自然覆盖：一句话结论、项目解决的问题、系统/工作流程/pipeline、亮点、为什么值得看、与我方向的关系。不要嵌套JSON/dict。",
+                "category": "工具/框架/库/应用/模型系统/其他",
                 "relevance": <你的评分>,
                 "highlights": ["亮点1", "亮点2", "亮点3"]
             }
             重要：summary 必须是一段纯文本字符串，不要返回嵌套的 JSON 对象或字典。
+            如果这是一个 repo，请尽量讲清它怎么工作、怎么用，而不是只说“这是一个很有前景的项目”。
             使用中文回答。
             直接返回上述 JSON 格式，无需任何额外解释。
         """
@@ -179,8 +182,9 @@ class GitHubSource(BaseSource):
                   <li class="summary-item">
                     <div class="summary-item__header"><span class="summary-item__title">项目名</span><span class="summary-pill">类型</span></div>
                     <p class="summary-item__stars">⭐ XXX stars (+YYY today)</p>
-                    <p><strong>推荐理由：</strong>...</p>
-                    <p><strong>亮点特性：</strong>...</p>
+                    <p><strong>一句话结论：</strong>...</p>
+                    <p><strong>系统与流程：</strong>...</p>
+                    <p><strong>为什么值得看：</strong>...</p>
                   </li>
                 </ol>
               </div>
@@ -192,4 +196,5 @@ class GitHubSource(BaseSource):
 
             注意：每个重点推荐项目必须包含该项目的真实 star 数据（从上面的摘要中提取），格式为 "⭐ XXX stars (+YYY today)"。
             用中文撰写内容，重点推荐部分建议返回 3-5 个项目。
+            不要只写泛泛评价，请尽量说清项目的工作机制、使用方式或系统 pipeline。
         """

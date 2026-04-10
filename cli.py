@@ -160,6 +160,12 @@ def cmd_fetch(args):
         argv.extend(["--queries"] + args.queries)
     if args.content_type:
         argv.extend(["--content_type"] + args.content_type)
+    if args.sort:
+        argv.extend(["--sort", args.sort])
+    if args.platform_source:
+        argv.extend(["--platform-source", args.platform_source])
+    if args.interval:
+        argv.extend(["--interval", args.interval])
 
     sys.argv = argv
     from agent_bridge import main
@@ -216,7 +222,7 @@ def main():
     # --- run ---
     p_run = sub.add_parser("run", help="Run the daily recommender pipeline")
     p_run.add_argument("--sources", nargs="+",
-                       choices=["github", "huggingface", "twitter", "arxiv", "semanticscholar"],
+                       choices=["github", "huggingface", "twitter", "arxiv", "alphaxiv", "semanticscholar"],
                        help="Information sources to run")
     p_run.add_argument("--save", action="store_true", default=True, help="Save results to history (default: true)")
     p_run.add_argument("--no-save", dest="save", action="store_false", help="Don't save results")
@@ -229,11 +235,14 @@ def main():
 
     # --- fetch ---
     p_fetch = sub.add_parser("fetch", help="Fetch items from a source (JSON to stdout)")
-    p_fetch.add_argument("source", choices=["arxiv", "huggingface", "github", "semanticscholar", "twitter"])
+    p_fetch.add_argument("source", choices=["arxiv", "alphaxiv", "huggingface", "github", "semanticscholar", "twitter"])
     p_fetch.add_argument("--categories", nargs="+", default=None)
     p_fetch.add_argument("--max", type=int, default=30)
     p_fetch.add_argument("--queries", nargs="+", default=None)
     p_fetch.add_argument("--content-type", dest="content_type", nargs="+", default=None)
+    p_fetch.add_argument("--sort", type=str, default="Hot")
+    p_fetch.add_argument("--platform-source", dest="platform_source", type=str, default="GitHub")
+    p_fetch.add_argument("--interval", type=str, default="7 Days")
 
     # --- clean ---
     p_clean = sub.add_parser("clean", help="Clear caches and/or history")
