@@ -1,10 +1,11 @@
 import argparse
 import json
 import time
+from datetime import datetime
 
 from base_source import BaseSource
 from config import LLMConfig, CommonConfig
-from fetchers.huggingface_fetcher import get_daily_papers, get_trending_models_api
+from fetchers.huggingface_fetcher import get_daily_papers, get_trending_models_api, get_weekly_papers
 from email_utils.base_template import get_stars, framework, get_empty_html
 from email_utils.huggingface_template import get_paper_block_html, get_model_block_html
 from tqdm import tqdm
@@ -17,22 +18,34 @@ class HuggingFaceSource(BaseSource):
     default_title = "Daily HuggingFace"
 
     def __init__(self, source_args: dict, llm_config: LLMConfig, common_config: CommonConfig):
+        self.period = source_args.get("period", "daily")
+        self.week_id = source_args.get("week_id", "")
         super().__init__(source_args, llm_config, common_config)
         self.content_types = [ct.lower() for ct in source_args.get("content_type", ["papers", "models"])]
         self.max_papers = source_args.get("max_papers", 30)
         self.max_models = source_args.get("max_models", 15)
 
+        if self.period == "weekly":
+            if not self.week_id:
+                iso = self.run_local_datetime.isocalendar()
+                self.week_id = f"{iso.year}-W{iso.week:02d}"
+            self._reconfigure_storage([self.name, "weekly"], self.week_id)
+
         self.papers = []
         self.models = []
         if "papers" in self.content_types:
-            cached = self._load_fetch_cache("daily_papers")
+            cache_key = "daily_papers" if self.period == "daily" else f"weekly_papers_{self.week_id}"
+            cached = self._load_fetch_cache(cache_key)
             if cached is not None:
                 self.papers = cached
             else:
-                self.papers = get_daily_papers(self.max_papers * 2)
+                if self.period == "weekly":
+                    self.papers = get_weekly_papers(self.week_id, self.max_papers * 2)
+                else:
+                    self.papers = get_daily_papers(self.max_papers * 2)
                 if self.papers:
-                    self._save_fetch_cache("daily_papers", self.papers)
-            print(f"[{self.name}] {len(self.papers)} daily papers")
+                    self._save_fetch_cache(cache_key, self.papers)
+            print(f"[{self.name}] {len(self.papers)} {self.period} papers")
         if "models" in self.content_types:
             cached = self._load_fetch_cache("trending_models")
             if cached is not None:
@@ -51,6 +64,14 @@ class HuggingFaceSource(BaseSource):
             help="[HuggingFace] Content types to fetch",
         )
         parser.add_argument(
+            "--hf_period", type=str, choices=["daily", "weekly"], default=os.getenv("HF_PERIOD", "daily"),
+            help="[HuggingFace] Fetch daily papers or a weekly paper list",
+        )
+        parser.add_argument(
+            "--hf_week_id", type=str, default=os.getenv("HF_WEEK_ID", ""),
+            help="[HuggingFace] Specific weekly page such as 2026-W15",
+        )
+        parser.add_argument(
             "--hf_max_papers", type=int, default=30,
             help="[HuggingFace] Max papers to recommend",
         )
@@ -63,6 +84,8 @@ class HuggingFaceSource(BaseSource):
     def extract_args(args) -> dict:
         return {
             "content_type": args.hf_content_type,
+            "period": args.hf_period,
+            "week_id": args.hf_week_id,
             "max_papers": args.hf_max_papers,
             "max_models": args.hf_max_models,
         }
@@ -79,7 +102,8 @@ class HuggingFaceSource(BaseSource):
 
     def get_item_cache_id(self, item: dict) -> str:
         if item.get("_hf_type") == "paper":
-            return "paper_" + item.get("id", "unknown")
+            period_prefix = item.get("hf_period", self.period)
+            return period_prefix + "_paper_" + item.get("id", "unknown")
         else:
             return "model_" + item.get("model_id", "unknown").replace("/", "_")
 
@@ -100,14 +124,26 @@ class HuggingFaceSource(BaseSource):
             标题: {}
             摘要: {}
             社区点赞数: {}
-        """.format(item["title"], item["abstract"], item.get("upvotes", 0))
+            周榜信息: period={} | week={} | discussion={} | resources={}
+        """.format(
+            item["title"],
+            item["abstract"],
+            item.get("upvotes", 0),
+            item.get("hf_period", self.period),
+            item.get("hf_week", self.week_id),
+            item.get("discussion_count", 0),
+            item.get("resource_count", 0),
+        )
         prompt += """
-            1. 用中文总结这篇论文的主要内容和创新点。
-            2. 请评估这篇论文与我研究领域的相关性，并给出 0-10 的评分。其中 0 表示完全不相关，10 表示高度相关。
+            1. 先给一句话结论（TLDR），要求直观易懂。
+            2. 说明这篇论文解决什么问题。
+            3. 说明方法核心以及 pipeline / training recipe。
+            4. 说明它和已有方法比新在哪里。
+            5. 请评估这篇论文与我研究领域的相关性，并给出 0-10 的评分。其中 0 表示完全不相关，10 表示高度相关。
 
             请按以下 JSON 格式给出你的回答：
             {
-                "summary": "一段纯文本的中文总结（不要嵌套JSON/dict，直接写一段话）",
+                "summary": "一个连续的中文段落，内部自然覆盖：一句话结论、问题、方法核心、pipeline/training recipe、新意、为什么值得看、与我方向的关系。不要嵌套JSON/dict。",
                 "relevance": <你的评分>
             }
             重要：summary 必须是一段纯文本字符串，不要返回嵌套的 JSON 对象或字典。
@@ -138,12 +174,15 @@ class HuggingFaceSource(BaseSource):
             ", ".join(tags) if tags else "无标签",
         )
         prompt += """
-            1. 用中文总结这个模型的主要功能和适用场景。
-            2. 请评估这个模型对我研究/工作的有用程度，并给出 0-10 的评分。其中 0 表示完全没用，10 表示非常有用。
+            1. 先给一句话结论（TLDR），要求直观易懂。
+            2. 说明这个模型解决什么问题、适用于什么任务。
+            3. 说明它的系统结构、使用流程、典型 pipeline 或部署方式。
+            4. 说明它和常见方案相比新在哪里，或者为什么它最近值得关注。
+            5. 请评估这个模型对我研究/工作的有用程度，并给出 0-10 的评分。其中 0 表示完全没用，10 表示非常有用。
 
             请按以下 JSON 格式给出你的回答：
             {
-                "summary": "一段纯文本的中文总结（不要嵌套JSON/dict，直接写一段话）",
+                "summary": "一个连续的中文段落，内部自然覆盖：一句话结论、任务/问题、模型/系统核心、使用流程或 pipeline、亮点、为什么值得看、与我方向的关系。不要嵌套JSON/dict。",
                 "usefulness": <你的评分>
             }
             重要：summary 必须是一段纯文本字符串，不要返回嵌套的 JSON 对象或字典。
@@ -165,6 +204,10 @@ class HuggingFaceSource(BaseSource):
                 "summary": self._ensure_str(data["summary"]),
                 "score": float(data["relevance"]),
                 "upvotes": item.get("upvotes", 0),
+                "discussion_count": item.get("discussion_count", 0),
+                "resource_count": item.get("resource_count", 0),
+                "hf_period": item.get("hf_period", self.period),
+                "hf_week": item.get("hf_week", self.week_id),
                 "url": item["paper_url"],
             }
         else:
@@ -198,10 +241,15 @@ class HuggingFaceSource(BaseSource):
         return "255,111,0"
 
     def get_section_header(self) -> str:
-        return '<div class="section-title" style="border-bottom-color: #ff6f00;">🤗 HuggingFace Daily</div>'
+        label = "Weekly" if self.period == "weekly" else "Daily"
+        suffix = f" ({self.week_id})" if self.period == "weekly" and self.week_id else ""
+        return f'<div class="section-title" style="border-bottom-color: #ff6f00;">🤗 HuggingFace {label}{suffix}</div>'
 
     def get_max_items(self) -> int:
         return self.max_papers + self.max_models
+
+    def delta_snapshot_mode(self) -> bool:
+        return self.period == "weekly"
 
     def get_recommendations(self) -> list[dict]:
         """Override: process papers and models separately with independent limits."""
@@ -216,12 +264,25 @@ class HuggingFaceSource(BaseSource):
         paper_recs = self._process_batch(papers, "papers") if papers else []
         model_recs = self._process_batch(models, "models") if models else []
 
-        paper_recs = sorted(paper_recs, key=lambda x: x.get("score", 0), reverse=True)[:self.max_papers]
-        model_recs = sorted(model_recs, key=lambda x: x.get("score", 0), reverse=True)[:self.max_models]
+        paper_recs = sorted(paper_recs, key=lambda x: x.get("score", 0), reverse=True)
+        model_recs = sorted(model_recs, key=lambda x: x.get("score", 0), reverse=True)
+
+        if self.delta_snapshot_mode():
+            paper_recs = [
+                item for item in paper_recs
+                if item.get("_cache_id", "") in self.new_history_ids
+            ]
+            model_recs = [
+                item for item in model_recs
+                if item.get("_cache_id", "") in self.new_history_ids
+            ]
+
+        paper_recs = paper_recs[:self.max_papers]
+        model_recs = model_recs[:self.max_models]
 
         combined = sorted(paper_recs + model_recs, key=lambda x: x.get("score", 0), reverse=True)[:self.MAX_RECOMMEND]
 
-        if self.save_dir:
+        if self.save_dir and combined:
             self._save_markdown(combined)
 
         return combined
@@ -265,7 +326,7 @@ class HuggingFaceSource(BaseSource):
 
         # Save to history as snapshot (not used as cache)
         if self.save_dir:
-            email_path = os.path.join(self.save_dir, f"{self.name}_email.html")
+            email_path = os.path.join(self.save_dir, f"{self.name}_{self.period}_email_{self.run_stamp}.html")
             os.makedirs(os.path.dirname(email_path), exist_ok=True)
             with open(email_path, "w", encoding="utf-8") as f:
                 f.write(email_html)
@@ -300,8 +361,10 @@ class HuggingFaceSource(BaseSource):
                 <ol class="summary-list">
                   <li class="summary-item">
                     <div class="summary-item__header"><span class="summary-item__title">标题</span><span class="summary-pill">类型</span></div>
-                    <p><strong>推荐理由：</strong>...</p>
-                    <p><strong>关键亮点：</strong>...</p>
+                    <p><strong>一句话结论：</strong>...</p>
+                    <p><strong>问题与方法 / 系统：</strong>...</p>
+                    <p><strong>Pipeline / 使用方式：</strong>...</p>
+                    <p><strong>为什么值得看：</strong>...</p>
                   </li>
                 </ol>
               </div>
@@ -312,4 +375,5 @@ class HuggingFaceSource(BaseSource):
             </div>
 
             用中文撰写内容，重点推荐部分建议返回 3-5 项内容。
+            不要只写流行度判断，请尽量说清论文/模型的工作机制和 pipeline。
         """

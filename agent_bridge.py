@@ -37,6 +37,14 @@ def load_dotenv(path: str = ".env") -> None:
             os.environ.setdefault(key, value)
 
 
+def _local_date_and_stamp(date: str | None = None) -> tuple[str, str]:
+    if date:
+        stamp = f"{date}-{datetime.now().astimezone().strftime('%H_%M_%S')}"
+        return date, stamp
+    now = datetime.now().astimezone()
+    return now.strftime("%Y-%m-%d"), now.strftime("%Y-%m-%d-%H_%M_%S")
+
+
 def send_email_html(html: str, subject: str) -> bool:
     """Send an HTML email using SMTP config from environment."""
     load_dotenv()
@@ -86,7 +94,7 @@ def send_email_html(html: str, subject: str) -> bool:
 def save_items(source: str, items: list[dict], date: str | None = None,
                save_dir: str = "./history") -> str:
     """Save scored items to history/{source}/{date}/json/ and a summary markdown."""
-    date = date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    date, stamp = _local_date_and_stamp(date)
     base_dir = os.path.dirname(os.path.abspath(__file__))
     out_dir = os.path.join(base_dir, save_dir, source, date)
     json_dir = os.path.join(out_dir, "json")
@@ -97,11 +105,13 @@ def save_items(source: str, items: list[dict], date: str | None = None,
         item_id = item.get("cache_id", item.get("title", "unknown"))
         safe_id = "".join(c if c.isalnum() or c in "-_" else "_" for c in str(item_id))[:80]
         path = os.path.join(json_dir, f"{safe_id}.json")
+        if os.path.exists(path):
+            continue
         with open(path, "w", encoding="utf-8") as f:
             json.dump(item, f, ensure_ascii=False, indent=2)
 
     # Save markdown summary
-    md_path = os.path.join(out_dir, f"{date}.md")
+    md_path = os.path.join(out_dir, f"{stamp}.md")
     with open(md_path, "w", encoding="utf-8") as f:
         f.write(f"# {source} Recommendations\n## Date: {date}\n\n")
         for i, item in enumerate(items, 1):
@@ -117,11 +127,11 @@ def save_items(source: str, items: list[dict], date: str | None = None,
 def save_email_html(source: str, html: str, date: str | None = None,
                     save_dir: str = "./history") -> str:
     """Save rendered email HTML to history/{source}/{date}/."""
-    date = date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    date, stamp = _local_date_and_stamp(date)
     base_dir = os.path.dirname(os.path.abspath(__file__))
     out_dir = os.path.join(base_dir, save_dir, source, date)
     os.makedirs(out_dir, exist_ok=True)
-    path = os.path.join(out_dir, f"{source}_email.html")
+    path = os.path.join(out_dir, f"{source}_email_{stamp}.html")
     with open(path, "w", encoding="utf-8") as f:
         f.write(html)
     print(f"Email HTML saved to {path}")
@@ -131,7 +141,7 @@ def save_email_html(source: str, html: str, date: str | None = None,
 def save_ideas(ideas: list[dict], date: str | None = None,
                save_dir: str = "./history") -> str:
     """Save research ideas to history/ideas/{date}/."""
-    date = date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    date, stamp = _local_date_and_stamp(date)
     base_dir = os.path.dirname(os.path.abspath(__file__))
     out_dir = os.path.join(base_dir, save_dir, "ideas", date)
     os.makedirs(out_dir, exist_ok=True)
@@ -139,8 +149,11 @@ def save_ideas(ideas: list[dict], date: str | None = None,
     json_path = os.path.join(out_dir, "ideas.json")
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(ideas, f, ensure_ascii=False, indent=2)
+    snapshot_json_path = os.path.join(out_dir, f"ideas_{stamp}.json")
+    with open(snapshot_json_path, "w", encoding="utf-8") as f:
+        json.dump(ideas, f, ensure_ascii=False, indent=2)
 
-    md_path = os.path.join(out_dir, "ideas.md")
+    md_path = os.path.join(out_dir, f"ideas_{stamp}.md")
     with open(md_path, "w", encoding="utf-8") as f:
         f.write(f"# Daily Research Ideas\n## Date: {date}\n\n")
         for i, idea in enumerate(ideas, 1):
@@ -173,7 +186,7 @@ def cache_clean(targets: list[str], before: str | None = None, dry_run: bool = F
     if clean_all or "eval" in target_set:
         dirs_to_clean.append(("eval cache", os.path.join(base_dir, "state", "eval_cache")))
     if clean_all or "history" in target_set:
-        for source in ["arxiv", "huggingface", "github", "semanticscholar", "twitter"]:
+        for source in ["arxiv", "alphaxiv", "huggingface", "github", "semanticscholar", "twitter"]:
             dirs_to_clean.append((f"history/{source}", os.path.join(base_dir, "history", source)))
     if clean_all or "ideas" in target_set:
         dirs_to_clean.append(("history/ideas", os.path.join(base_dir, "history", "ideas")))
@@ -243,7 +256,7 @@ def main():
 
     # --- fetch: run a fetcher and print JSON ---
     p_fetch = sub.add_parser("fetch", help="Run a fetcher and print JSON to stdout")
-    p_fetch.add_argument("source", choices=["arxiv", "huggingface", "github",
+    p_fetch.add_argument("source", choices=["arxiv", "alphaxiv", "huggingface", "github",
                                              "semanticscholar", "twitter"])
     p_fetch.add_argument("--categories", nargs="+", default=["cs.AI"])
     p_fetch.add_argument("--max", type=int, default=30)
@@ -251,6 +264,9 @@ def main():
     p_fetch.add_argument("--language", type=str, default=None)
     p_fetch.add_argument("--since", type=str, default="daily")
     p_fetch.add_argument("--content_type", nargs="+", default=["papers"])
+    p_fetch.add_argument("--sort", type=str, default="Hot")
+    p_fetch.add_argument("--platform-source", dest="platform_source", type=str, default="GitHub")
+    p_fetch.add_argument("--interval", type=str, default="7 Days")
 
     # --- save-items: save scored items from stdin JSON ---
     p_save = sub.add_parser("save-items", help="Save scored items (JSON from stdin)")
@@ -314,6 +330,15 @@ def _run_fetcher(args) -> list:
                 p["_category"] = cat
                 items.append(p)
         return items
+
+    elif args.source == "alphaxiv":
+        from fetchers.alphaxiv_fetcher import fetch_explore
+        return fetch_explore(
+            sort=args.sort,
+            max_results=args.max,
+            source=args.platform_source,
+            interval=args.interval,
+        )
 
     elif args.source == "huggingface":
         from fetchers.huggingface_fetcher import get_daily_papers, get_trending_models_api

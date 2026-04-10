@@ -100,7 +100,7 @@ const DEFAULT_CONFIG: ConfigData = {
 };
 
 const DEFAULT_RUN_FORM: RunRequest = {
-  sources: ["github", "huggingface", "arxiv"], generate_report: true, generate_ideas: false,
+  sources: ["alphaxiv", "github", "huggingface", "arxiv"], generate_report: true, generate_ideas: false,
   save: true, receiver: "", description: "", researcher_profile: "", scholar_url: "",
   x_accounts_input: "", delivery_mode: "combined_report",
 };
@@ -132,6 +132,7 @@ const SOURCES = [
   { key: "huggingface", label: "HuggingFace", description: "论文与模型动态", iconLight: iconHF, iconDark: iconHF, iconActive: iconHF },
   { key: "twitter", label: "X", description: "账号时间线和圈层信号", iconLight: iconXBlack, iconDark: iconX, iconActive: iconX },
   { key: "arxiv", label: "arXiv", description: "新论文抓取与筛选", iconLight: iconArxiv, iconDark: iconArxiv, iconActive: iconArxiv },
+  { key: "alphaxiv", label: "alphaXiv", description: "平台热榜论文与热门讨论", iconLight: iconArxiv, iconDark: iconArxiv, iconActive: iconArxiv },
 ] satisfies Array<{ key: SourceName; label: string; description: string; iconLight: string; iconDark: string; iconActive: string }>;
 
 const COMING_SOON_SOURCE_KEYS = ["wos", "cnki", "wechat", "scholar"] as const satisfies ReadonlyArray<ComingSoonSourceKey>;
