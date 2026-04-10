@@ -1,0 +1,24 @@
+I work on frontier AI systems and want a hot-first, relevance-aware daily digest.
+
+My main directions are:
+1. RL And Policy Learning - reinforcement learning, on-policy optimization, post-training, RLHF/RLVR, policy distillation
+2. Generative Modeling - diffusion models, autoregressive generation, flow/latent generative modeling
+3. MLLM And Unified Gen-Understand Models - multimodal LLMs, generation-understanding unification, multimodal reasoning
+4. Agents - tool-using agents, planning, autonomous workflows, multi-agent systems
+5. Video And Embodied - VideoLLM, video understanding, video generation, embodied multimodal agents
+6. Hot But Worth Tracking - architecture shifts, attention alternatives, systems breakthroughs, and unusually hot papers
+
+Digest preferences:
+- Build the candidate pool from hot sources first, then rerank by relevance.
+- Keep both strongly related items and globally hot but weakly related items if they matter.
+- X/Twitter should emphasize paper shares, explainers, demos, releases, and AI news.
+- Summaries should use TLDR + method/pipeline style instead of vague high-level text.
+
+Important summary requirements:
+- First give a one-sentence TLDR.
+- Then explain the problem.
+- Then explain the method core.
+- Then explain the pipeline / training recipe / system workflow.
+- Then explain what is genuinely new.
+- Then explain why it is worth tracking.
+- Then explain how it relates to my directions.
