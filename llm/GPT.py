@@ -37,15 +37,12 @@ class GPT():
     def call_gpt_eval(self, message, model_name, retries=10, wait_time=1, temperature=0.0):
         for i in range(retries):
             try:
-                request_kwargs = {
-                    "model": model_name,
-                    "messages": message,
-                    "temperature": temperature,
-                }
-                if str(model_name).startswith("gpt-5"):
-                    request_kwargs["extra_body"] = {"reasoning_effort": "low"}
+                request_kwargs = self._build_request_kwargs(message, model_name, temperature)
                 result = self.client.chat.completions.create(**request_kwargs)
-                response_message = self._normalize_response_text(result.choices[0].message.content)
+                try:
+                    response_message = self._extract_response_text(result.choices[0].message)
+                except ValueError as exc:
+                    response_message = self._collect_streaming_text(request_kwargs, exc)
                 return response_message
             except Exception as e:
                 if i < retries - 1:
@@ -63,7 +60,91 @@ class GPT():
         response = self.call_gpt_eval(prompt, self.model_name, temperature=temperature)
         return response
 
-    def _normalize_response_text(self, text):
+    @staticmethod
+    def _build_request_kwargs(message, model_name, temperature):
+        request_kwargs = {
+            "model": model_name,
+            "messages": message,
+            "temperature": temperature,
+        }
+        if str(model_name).startswith("gpt-5"):
+            request_kwargs["extra_body"] = {"reasoning_effort": "low"}
+        return request_kwargs
+
+    def _collect_streaming_text(self, request_kwargs, original_error):
+        stream_kwargs = dict(request_kwargs)
+        stream_kwargs["stream"] = True
+        stream = self.client.chat.completions.create(**stream_kwargs)
+        text = self._extract_stream_text(stream)
+        if text:
+            return self._normalize_response_text(text)
+        raise original_error
+
+    @classmethod
+    def _extract_response_text(cls, message):
+        candidates = []
+
+        content = getattr(message, "content", None)
+        text = cls._content_to_text(content)
+        if text:
+            return cls._normalize_response_text(text)
+        candidates.append(("content", content))
+
+        reasoning_content = getattr(message, "reasoning_content", None)
+        text = cls._content_to_text(reasoning_content)
+        if text:
+            return cls._normalize_response_text(text)
+        candidates.append(("reasoning_content", reasoning_content))
+
+        raise ValueError(
+            "LLM response did not contain assistant text content. "
+            f"Message fields: {candidates}"
+        )
+
+    @staticmethod
+    def _content_to_text(content):
+        if isinstance(content, str):
+            return content
+        if not isinstance(content, list):
+            return None
+
+        chunks = []
+        for part in content:
+            text = None
+            if isinstance(part, dict):
+                text = part.get("text")
+            else:
+                text = getattr(part, "text", None)
+
+            if isinstance(text, str) and text.strip():
+                chunks.append(text)
+
+        if not chunks:
+            return None
+        return "\n".join(chunks)
+
+    @classmethod
+    def _extract_stream_text(cls, stream):
+        chunks = []
+        for event in stream:
+            choices = getattr(event, "choices", None) or []
+            for choice in choices:
+                delta = getattr(choice, "delta", None)
+                if delta is None:
+                    continue
+                content = getattr(delta, "content", None)
+                text = cls._content_to_text(content)
+                if text:
+                    chunks.append(text)
+                    continue
+                if isinstance(content, str) and content:
+                    chunks.append(content)
+        if not chunks:
+            return None
+        return "".join(chunks)
+
+    @staticmethod
+    def _normalize_response_text(text):
         if not isinstance(text, str):
             return text
 
