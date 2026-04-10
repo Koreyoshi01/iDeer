@@ -1697,15 +1697,17 @@ Return JSON:
         prompt += tweet_context
         prompt += """
             请评估这条推文：
-            1. 用中文简要总结这条推文的核心内容（1-2句话）。
-            2. 判断推文类型：观点/新闻/讨论/分享/公告/日常。
-            3. 评估这条推文与我兴趣领域的相关性，并给出 0-10 的评分。其中 0 表示完全不相关，10 表示高度相关。
-            4. 列出 1-3 个关键要点。
+            1. 先给一句话结论（TLDR），要求一眼能看懂这条动态在讲什么。
+            2. 判断推文类型：paper-share / blog-thread / ai-news / tool-demo / release / discussion / opinion / daily。
+            3. 用中文说明它到底在讲什么核心事情。
+            4. 如果里面包含方法、系统流程、工程 pipeline、实验设置或具体实践经验，请尽量提取出来。
+            5. 评估这条推文与我兴趣领域的相关性，并给出 0-10 的评分。
+            6. 列出 1-3 个关键要点。
 
             请按以下 JSON 格式给出你的回答：
             {
-                "summary": "一段纯文本的中文总结（不要嵌套JSON/dict，直接写一段话）",
-                "category": "观点/新闻/讨论/分享/公告/日常",
+                "summary": "一个连续的中文段落，内部自然覆盖：一句话结论、这条动态在讲什么、里面是否有方法/系统/pipeline信息、为什么值得关注、与我方向的关系。不要嵌套JSON/dict。",
+                "category": "paper-share / blog-thread / ai-news / tool-demo / release / discussion / opinion / daily",
                 "relevance": <你的评分>,
                 "key_points": ["要点1", "要点2"]
             }
@@ -1810,7 +1812,9 @@ Return JSON:
                 <ol class="summary-list">
                   <li class="summary-item">
                     <div class="summary-item__header"><span class="summary-item__title">@用户名 / 机构：一句话概括</span><span class="summary-pill">类型</span></div>
+                    <p><strong>一句话结论：</strong>...</p>
                     <p><strong>发生了什么：</strong>...</p>
+                    <p><strong>方法 / 系统 / pipeline 信息：</strong>...</p>
                     <p><strong>为什么值得看：</strong>...</p>
                     <p class="summary-item__stars"><strong>互动：</strong>❤️ / 🔁 / 💬 ...</p>
                   </li>
@@ -1823,10 +1827,11 @@ Return JSON:
 
             用中文撰写内容。
             “必读动态”建议返回 4-6 条，优先选择真正有信息增量的账号或机构动作，不要重复同一件事。
+            优先覆盖 paper 分享、blog/explainer 线程、AI news、tool/vibe-coding demo、模型/系统 release。
         """
 
     def _save_markdown(self, recommendations: list[dict]):
-        save_path = os.path.join(self.save_dir, f"{self.run_date}.md")
+        save_path = os.path.join(self.save_dir, f"{self.run_stamp}.md")
         with open(save_path, "w", encoding="utf-8") as f:
             f.write("# X/Twitter 关键动态日报\n")
             f.write(f"## 日期：{self.run_date}\n\n")

@@ -80,19 +80,7 @@ class ArxivSource(BaseSource):
             标题: {}
             摘要: {}
         """.format(item["title"], item["abstract"])
-        prompt += """
-            1. 总结这篇论文的主要内容。
-            2. 请评估这篇论文与我研究领域的相关性，并给出 0-10 的评分。其中 0 表示完全不相关，10 表示高度相关。
-
-            请按以下 JSON 格式给出你的回答：
-            {
-                "summary": "一段纯文本的中文总结（不要嵌套JSON/dict，直接写一段话）",
-                "relevance": <你的评分>
-            }
-            重要：summary 必须是一段纯文本字符串，不要返回嵌套的 JSON 对象或字典。
-            使用中文回答。
-            直接返回上述 JSON 格式，无需任何额外解释。
-        """
+        prompt += self._method_first_summary_instruction("论文")
         return prompt
 
     def parse_eval_response(self, item: dict, response: str) -> dict:
@@ -147,8 +135,10 @@ class ArxivSource(BaseSource):
                 <ol class="summary-list">
                   <li class="summary-item">
                     <div class="summary-item__header"><span class="summary-item__title">论文标题</span><span class="summary-pill">相关性</span></div>
-                    <p><strong>推荐理由：</strong>...</p>
-                    <p><strong>关键贡献：</strong>...</p>
+                    <p><strong>一句话结论：</strong>...</p>
+                    <p><strong>问题与方法：</strong>...</p>
+                    <p><strong>Pipeline / 训练配方：</strong>...</p>
+                    <p><strong>为什么值得看：</strong>...</p>
                   </li>
                 </ol>
               </div>
@@ -159,4 +149,5 @@ class ArxivSource(BaseSource):
             </div>
 
             用中文撰写内容，重点推荐部分建议返回 3-5 篇论文。
+            不要只写趋势口号，请尽量说清每篇论文解决的问题、方法核心和 pipeline / training recipe。
         """

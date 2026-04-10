@@ -138,7 +138,7 @@ def main():
                         help="Path to researcher profile for idea generation")
     parser.add_argument("--idea_min_score", type=float, default=7, help="Min score for idea generation input")
     parser.add_argument("--idea_max_items", type=int, default=15, help="Max items to feed into idea generator")
-    parser.add_argument("--idea_count", type=int, default=5, help="Number of ideas to generate")
+    parser.add_argument("--idea_count", type=int, default=3, help="Number of ideas to generate")
 
     # Cross-source report config
     parser.add_argument("--generate_report", action="store_true", help="Generate a personalized cross-source report")
@@ -181,7 +181,7 @@ def main():
     parser.add_argument(
         "--report_idea_count",
         type=int,
-        default=env_int("REPORT_IDEA_COUNT", 4),
+        default=env_int("REPORT_IDEA_COUNT", 3),
         help="Maximum number of ideas in the cross-source report",
     )
     parser.add_argument(

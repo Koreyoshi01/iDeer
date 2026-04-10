@@ -143,17 +143,7 @@ class SemanticScholarSource(BaseSource):
 引用数: {item.get('citation_count', 0)}
 摘要: {abstract}
 
-1. 总结这篇论文的主要内容。
-2. 请评估这篇论文与我研究领域的相关性，并给出 0-10 的评分。其中 0 表示完全不相关，10 表示高度相关。
-
-请按以下 JSON 格式给出你的回答：
-{{
-    "summary": "一段纯文本的中文总结（不要嵌套JSON/dict，直接写一段话）",
-    "relevance": <你的评分>
-}}
-重要：summary 必须是一段纯文本字符串，不要返回嵌套的 JSON 对象或字典。
-使用中文回答。
-直接返回上述 JSON 格式，无需任何额外解释。"""
+{self._method_first_summary_instruction("论文")}"""
 
     def parse_eval_response(self, item: dict, response: str) -> dict:
         response = response.strip("```").strip("json")
@@ -216,8 +206,10 @@ class SemanticScholarSource(BaseSource):
                 <ol class="summary-list">
                   <li class="summary-item">
                     <div class="summary-item__header"><span class="summary-item__title">论文标题</span><span class="summary-pill">相关性</span></div>
-                    <p><strong>推荐理由：</strong>...</p>
-                    <p><strong>关键贡献：</strong>...</p>
+                    <p><strong>一句话结论：</strong>...</p>
+                    <p><strong>问题与方法：</strong>...</p>
+                    <p><strong>Pipeline / 训练配方：</strong>...</p>
+                    <p><strong>为什么值得看：</strong>...</p>
                   </li>
                 </ol>
               </div>
@@ -230,4 +222,5 @@ class SemanticScholarSource(BaseSource):
             这些论文来自 Semantic Scholar（覆盖 arXiv 之外的会议、期刊等），
             请特别指出那些发表在高影响力 venue 的论文。
             用中文撰写内容，重点推荐部分建议返回 3-5 篇论文。
+            不要只写泛泛趋势，请尽量说明论文解决的问题、核心机制和方法 pipeline。
         """

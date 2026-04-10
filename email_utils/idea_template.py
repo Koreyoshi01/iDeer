@@ -17,6 +17,9 @@ def get_idea_card_html(idea: dict, index: int, date: str) -> str:
     novelty = _escape(idea.get("novelty_estimate", "UNKNOWN"))
     feasibility = _escape(idea.get("feasibility", "UNKNOWN"))
     composite_score = idea.get("composite_score", 0)
+    idea_basis = _escape(idea.get("idea_basis", ""))
+    core_insight = _escape(idea.get("core_insight", ""))
+    plan_outline = _escape(idea.get("plan_outline", ""))
     min_experiment = _escape(idea.get("min_experiment", ""))
     command = f"/idea-from-daily {date} --idea {index}"
 
@@ -75,6 +78,24 @@ def get_idea_card_html(idea: dict, index: int, date: str) -> str:
                     border:1px solid #e5e7eb;">
           <div style="font-size:13px;font-weight:600;color:#374151;margin-bottom:4px;">假设 / Hypothesis</div>
           <div style="font-size:14px;color:#4b5563;line-height:1.6;">{hypothesis}</div>
+        </div>
+
+        <div style="margin:8px 0;padding:12px 16px;background:#fff;border-radius:8px;
+                    border:1px solid #e5e7eb;">
+          <div style="font-size:13px;font-weight:600;color:#374151;margin-bottom:4px;">依据 / Basis</div>
+          <div style="font-size:14px;color:#4b5563;line-height:1.6;">{idea_basis}</div>
+        </div>
+
+        <div style="margin:8px 0;padding:12px 16px;background:#fff;border-radius:8px;
+                    border:1px solid #e5e7eb;">
+          <div style="font-size:13px;font-weight:600;color:#374151;margin-bottom:4px;">核心洞察 / Core Insight</div>
+          <div style="font-size:14px;color:#4b5563;line-height:1.6;">{core_insight}</div>
+        </div>
+
+        <div style="margin:8px 0;padding:12px 16px;background:#fff;border-radius:8px;
+                    border:1px solid #e5e7eb;">
+          <div style="font-size:13px;font-weight:600;color:#374151;margin-bottom:4px;">初步计划 / Initial Plan</div>
+          <div style="font-size:14px;color:#4b5563;line-height:1.6;">{plan_outline}</div>
         </div>
 
         <div style="margin:8px 0;padding:12px 16px;background:#fff;border-radius:8px;
